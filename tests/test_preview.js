@@ -135,6 +135,13 @@ ${grab('freeMove')}
 ${grab('onFreeSquareClick')}
 ${grab('toggleFreePreview')}
 ${grab('renderTables')}
+/* 对弈模式：这个沙箱测的是预演，对弈那套只要"别把 refreshAll 拖崩"就够了。
+   真正跑一遍对弈前端的是 test_play.js */
+function updateLoadPlayBtn(){}
+function drawPlayBoard(){}
+function renderPlayMoveList(){}
+function renderPlayInfo(){}
+function updatePlaySideUI(){}
 ${grab('refreshAll')}
 ${grab('onSquareClick')}
 return {
@@ -503,8 +510,8 @@ console.log('【10】静态约束（防止以后改坏）');
   check(/function clearAskHistory\(\)/.test(src) && /function bindAskHistory\(key\)/.test(src),
         '有 clearAskHistory / bindAskHistory 两个收口函数');
   const nClear = (src.match(/clearAskHistory\(\);/g) || []).length;
-  check(nClear === 5,
-        `★clearAskHistory 恰好被调 5 次（编辑局面/复盘跳转/新开一局/载入 FEN/分析），实为 ${nClear}`);
+  check(nClear === 6,
+        `★clearAskHistory 恰好被调 6 次（编辑局面/复盘跳转/新开一局/载入 FEN/分析/读取对弈棋局），实为 ${nClear}`);
   check((src.match(/window\.askHistory = \[\];/g) || []).length === 1,
         '★window.askHistory 只在 clearAskHistory 里清（不许再有裸清，漏一处就会残留）');
   check(/bindAskHistory\(key\)/.test(fn('analyze')),

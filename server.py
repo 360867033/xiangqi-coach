@@ -26,6 +26,84 @@ from xq import zh as ZH
 
 WEB_DIR = os.path.join(HERE, "web")
 CFG = C.load_cfg()
+CFG_PATH = C.DEFAULT_CFG_PATH
+
+# ------------------------------------------------------------------ 设置白名单
+# 只有这些字段允许从「设置」界面写回 config.json。api_key / base_url /
+# engine_path / port 这类**故意不在列** —— 那等于给网页开一个改凭据、
+# 改引擎路径、改监听端口的后门。
+#   （类型, 最小值, 最大值）；"str" 类型的取值另由 EFFORT_CHOICES 把关
+SETTINGS_SPEC = {
+    "analyze_depth":    ("int", 4, 40),   # 讲解 / 分析局面时的引擎深度
+    "play_depth":       ("int", 4, 40),   # 对弈模式下 AI 走子的深度（与讲解深度互相独立）
+    "review_depth":     ("int", 4, 40),   # 整盘复盘的引擎深度
+    "multipv":          ("int", 1, 8),
+    "cloud_timeout":    ("int", 1, 30),
+    "cloud_enabled":    ("bool", None, None),
+    "reasoning_effort": ("str", None, None),
+}
+EFFORT_CHOICES = ("none", "minimal", "low", "medium", "high", "default")
+_cfg_lock = threading.Lock()
+
+
+def config_public():
+    """给前端看的配置快照（不含任何凭据）"""
+    return {
+        "model": CFG.get("model"),
+        "engine": os.path.basename(CFG.get("engine_path", "")),
+        "analyze_depth": CFG.get("analyze_depth", 18),
+        "play_depth": CFG.get("play_depth", 12),
+        "review_depth": CFG.get("review_depth", 14),
+        "multipv": CFG.get("multipv", 4),
+        "cloud": CFG.get("cloud_enabled", True),
+        "cloud_timeout": CFG.get("cloud_timeout", 6),
+        "reasoning_effort": CFG.get("reasoning_effort"),
+        "start_fen": R.START_FEN,
+    }
+
+
+def apply_settings(vals):
+    """校验设置并写回 config.json。
+
+    返回 (applied, errors)。**逐项校验、整体落盘**：有一项不合法只跳过那一项，
+    其余照常保存（不然用户改 3 个值、因为其中 1 个越界就全白填了）。
+    """
+    applied, errors = {}, []
+    for k, v in (vals or {}).items():
+        spec = SETTINGS_SPEC.get(k)
+        if not spec:
+            errors.append(f"不支持的设置项：{k}")
+            continue
+        kind, lo, hi = spec
+        if kind == "int":
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                errors.append(f"{k} 需要一个整数，收到 {v!r}")
+                continue
+            if not (lo <= iv <= hi):
+                errors.append(f"{k} 应在 {lo}~{hi} 之间，收到 {iv}")
+                continue
+            applied[k] = iv
+        elif kind == "bool":
+            applied[k] = bool(v)
+        else:
+            sv = str(v)
+            if k == "reasoning_effort" and sv not in EFFORT_CHOICES:
+                errors.append("reasoning_effort 只能是 " + "/".join(EFFORT_CHOICES))
+                continue
+            applied[k] = sv
+    if not applied:
+        return {}, errors
+    with _cfg_lock:
+        CFG.update(applied)
+        try:
+            with open(CFG_PATH, "w", encoding="utf-8") as fh:
+                json.dump(CFG, fh, ensure_ascii=False, indent=2)
+                fh.write("\n")
+        except OSError as e:
+            return {}, errors + [f"写入 config.json 失败：{e}"]
+    return applied, errors
 
 # ------------------------------------------------------------------ 缓存
 _facts_cache = {}
@@ -165,16 +243,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self._json({"error": "bad path"}, 400)
                 return self._serve_file(os.path.join(WEB_DIR, safe))
             if path == "/api/config":
-                return self._json({
-                    "ok": True,
-                    "model": CFG.get("model"),
-                    "engine": os.path.basename(CFG.get("engine_path", "")),
-                    "analyze_depth": CFG.get("analyze_depth", 18),
-                    "review_depth": CFG.get("review_depth", 14),
-                    "multipv": CFG.get("multipv", 4),
-                    "cloud": CFG.get("cloud_enabled", True),
-                    "start_fen": R.START_FEN,
-                })
+                return self._json({"ok": True, **config_public()})
             if path == "/api/validate":
                 # 局面合法性校验：给前端的编辑模式用（边编辑边提示哪里还不合法）
                 fen = qs.get("fen", [""])[0]
@@ -204,7 +273,10 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception as e:
                     return self._json({"ok": False, "valid": False, "moves": [],
                                        "error": f"{type(e).__name__}: {e}"})
-                return self._json({"ok": True, "valid": True, "moves": out})
+                return self._json({"ok": True, "valid": True, "moves": out,
+                                   # 对弈模式判终局要区分"被将死"和"困毙"，
+                                   # 两者都是无着可走，但说法不一样
+                                   "in_check": R.in_check(board, red)})
             if path == "/api/job":
                 jid = qs.get("id", [""])[0]
                 with _jobs_lock:
@@ -258,6 +330,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._handle_explain(data)
             if path == "/api/ask":
                 return self._handle_ask(data)
+            if path == "/api/bestmove":
+                return self._handle_bestmove(data)
+            if path == "/api/settings":
+                return self._handle_settings(data)
             if path == "/api/review":
                 return self._handle_review(data)
             if path == "/api/review_report":
@@ -399,6 +475,37 @@ class Handler(SimpleHTTPRequestHandler):
                                          prior=data.get("prior"))
         return self._stream_llm(msgs, effort_override=data.get("effort"),
                                 fen=facts.get("fen"))
+
+    def _handle_bestmove(self, data):
+        """对弈模式：给 AI 拿一步棋。
+
+        只跑引擎（不查云库、不叫大模型），所以刻意**不进 facts 缓存** ——
+        缓存键是 fen|played|depth|multipv，对弈每步的 fen 都不同，
+        塞进去只会把讲解用的缓存挤掉。引擎自己够快（深度 12 通常 <1 秒）。
+        """
+        fen = (data.get("fen") or "").strip()
+        if not fen:
+            return self._json({"ok": False, "error": "缺少 fen"}, 400)
+        try:
+            depth = int(data.get("depth") or CFG.get("play_depth", 12))
+        except (TypeError, ValueError):
+            depth = CFG.get("play_depth", 12)
+        depth = max(1, min(40, depth))
+        t0 = time.time()
+        r = C.build_bestmove(fen, depth=depth, cfg=CFG)
+        if "error" in r:
+            return self._json({"ok": False, "error": r["error"]})
+        r["elapsed"] = round(time.time() - t0, 2)
+        return self._json({"ok": True, **r})
+
+    def _handle_settings(self, data):
+        """保存设置到 config.json（字段白名单见 SETTINGS_SPEC）"""
+        applied, errors = apply_settings(data.get("settings") or {})
+        if errors and not applied:
+            return self._json({"ok": False, "error": "；".join(errors),
+                               "errors": errors, "config": config_public()})
+        return self._json({"ok": True, "applied": applied,
+                           "errors": errors, "config": config_public()})
 
     def _handle_review(self, data):
         text = data.get("text") or ""

@@ -22,6 +22,7 @@ FAST = [
     ("棋盘点击与坐标反算", ["node", "tests/test_board_click.js"], "全部通过"),
     ("局面编辑流程", ["node", "tests/test_edit_mode.js"], "全部通过"),
     ("预演摆盘（摆盘时讲解不许消失）", ["node", "tests/test_preview.js"], "全部通过"),
+    ("对弈模式（状态隔离 / 悔棋 / 棋谱导出对拍）", ["node", "tests/test_play.js"], "全部通过"),
     ("局面校验接口 /api/validate", [PY, "-u", "tests/test_edit_api.py"], "全部通过"),
 ]
 SLOW = [
@@ -74,6 +75,8 @@ def run(name, cmd, expect):
 
 def main():
     full = "--full" in sys.argv
+    # 有的 node 测试要反过来调 Python 做跨语言对拍（棋谱格式），把解释器路径告诉它
+    os.environ.setdefault("PY_EXE", sys.executable)
     todo = FAST + (SLOW if full else [])
     print(f"共 {len(todo)} 项自测{'（含端到端，较慢）' if full else '（快速，不含引擎/大模型）'}\n")
     bad = []

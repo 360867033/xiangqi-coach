@@ -50,8 +50,9 @@ h1,h2,h3{margin:0}
 .wrap>div::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px;
   border:2px solid transparent;background-clip:content-box}
 .wrap>div::-webkit-scrollbar-thumb:hover{background:var(--dim);background-clip:content-box}
-/* 编辑模式下左栏要让出棋子盒的位置（棋盘 484 + 间距 12 + 棋子盒 178） */
-#viewCoach.editing{grid-template-columns:704px minmax(0,1fr)}
+/* 编辑模式下左栏要让出棋子盒的位置（棋盘 484 + 间距 12 + 棋子盒 178）
+   对弈模式的「编辑局面」用的是同一套棋子盒，所以同样要加宽 */
+#viewCoach.editing,#viewPlay.editing{grid-template-columns:704px minmax(0,1fr)}
 /* 左栏内部：棋盘卡片高度固定，着法记录卡片吃掉剩余空间并自己滚动 ——
    这样窗口不高时优先压缩着法记录，而不是让整个左栏滚动、把棋盘顶走 */
 #viewCoach>div:first-child{display:flex;flex-direction:column}
@@ -68,7 +69,7 @@ h1,h2,h3{margin:0}
   .wrap{grid-template-columns:1fr;grid-template-rows:none;
     flex:none;height:auto;overflow:visible}
   .wrap>div{overflow:visible}
-  #viewCoach.editing{grid-template-columns:minmax(0,1fr)}
+  #viewCoach.editing,#viewPlay.editing{grid-template-columns:minmax(0,1fr)}
 }
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
   padding:14px;margin-bottom:14px}
@@ -193,6 +194,35 @@ td .pvline{white-space:normal}
 svg.board.previewing{cursor:default}
 /* 自由推演：棋盘是可以点的（棋盘显示的是虚拟局面，所以点它不会改真实棋局） */
 svg.board.free{cursor:crosshair}
+/* ================= 设置弹窗 ================= */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;
+  align-items:center;justify-content:center;z-index:60;padding:20px}
+.modalBox{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+  padding:18px 20px;width:min(470px,100%);box-shadow:0 18px 50px rgba(0,0,0,.28);
+  max-height:88vh;overflow:auto}
+.modalBox h2{font-size:14px;font-weight:700;letter-spacing:0;color:var(--text)}
+.setRow{display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:8px 0;border-bottom:1px dashed var(--line)}
+.setRow:last-of-type{border-bottom:none}
+.setRow label{font-size:13px;cursor:pointer}
+.setRow .sub{display:block;font-size:11.5px;color:var(--dim);margin-top:1px;
+  font-weight:400;line-height:1.5}
+/* 覆盖全局 input[type=text]{width:100%}：设置项的数字框要窄 */
+.setRow input[type=text],.setRow select{width:80px;padding:5px 8px;text-align:right}
+.setRow select{width:auto;min-width:80px;text-align:left}
+.setRow input[type=checkbox]{margin-right:6px}
+
+/* ================= 对弈模式 ================= */
+/* 棋盘一律画在 .board 里；对弈棋盘复用同一套底盘（boardBaseSvg），只是另一块宿主 */
+.board.play{cursor:pointer}
+.playSide{font-weight:600}
+.playOver{color:var(--bad);font-weight:700}
+.stat.sm{grid-template-columns:repeat(auto-fit,minmax(74px,1fr))}
+#saveListHost .saveItem{display:flex;align-items:center;gap:8px;padding:6px 0;
+  border-bottom:1px dashed var(--line);font-size:12.5px}
+#saveListHost .saveItem:last-child{border-bottom:none}
+#saveListHost .saveItem .meta{flex:1 1 auto;min-width:0;color:var(--dim);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -202,7 +232,11 @@ svg.board.free{cursor:crosshair}
   <span class="sub" id="engInfo">引擎加载中…</span>
   <div class="tabs">
     <button class="tab on" data-view="coach">教练模式</button>
+    <button class="tab" data-view="play">对弈模式</button>
     <button class="tab" data-view="review">整盘复盘</button>
+    <!-- 设置按钮故意用 .btn 而不是 .tab：.tab 会被下面那个循环当成视图切换，
+         dataset.view 是 undefined，会把 view 置成 undefined 然后把界面弄白 -->
+    <button class="btn" id="btnSettings" style="padding:6px 12px">⚙ 设置</button>
   </div>
 </div>
 
@@ -275,6 +309,16 @@ svg.board.free{cursor:crosshair}
       </div>
       <div class="hint">「计算」只跑皮卡鱼 + 查云库（不叫大模型）；「分析」＝计算 + 教练讲解。
         同一个局面先点过「计算」，再点「分析」会直接接着讲，不会重算。</div>
+      <div class="row" style="margin-top:8px">
+        <label class="muted" style="cursor:pointer">
+          <input type="checkbox" id="autoCalc" checked> 自动计算当前局势
+        </label>
+        <span class="muted">—— 每走一步自动跑皮卡鱼 + 云库（只算不讲，不叫大模型）</span>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn" id="btnLoadPlay" disabled>读取对弈棋局</button>
+        <span class="muted" id="loadPlayNote">在「对弈模式」下完棋后，可从那里把棋局搬过来讲解</span>
+      </div>
       <div class="hint" id="statusHint">在棋盘上走一步，然后点「讲解我这一步」，就知道这步棋差在哪。</div>
     </div>
     <div class="card">
@@ -331,6 +375,98 @@ svg.board.free{cursor:crosshair}
   </div>
 </div>
 
+<!-- ==================== 对弈模式 ==================== -->
+<!-- 和教练模式是**两盘棋**：这里用独立的 play 状态 + 独立棋盘 #playBoardHost。
+     因为需求要"教练模式一键读取对弈棋局"——说明对弈的棋局要能整盘搬到教练模式去讲，
+     如果两边共用一块棋盘就没有"读取"这回事了。 -->
+<div class="wrap" id="viewPlay" style="display:none">
+  <div>
+    <div class="card">
+      <div class="boardRow">
+        <div id="playBoardHost"></div>
+        <!-- 摆局面的棋子盒：跟教练模式那套同一份样式与逻辑，只是操作对象是 play -->
+        <div class="tray" id="ptray" style="display:none">
+          <div class="thead">棋子盒 <span id="ptrayNote"></span></div>
+          <div class="tgroup">
+            <div class="tlab">红方</div>
+            <div class="tgrid" id="ptrayRed"></div>
+          </div>
+          <div class="tgroup">
+            <div class="tlab">黑方</div>
+            <div class="tgrid" id="ptrayBlack"></div>
+          </div>
+          <div class="thint">左键点棋子选中，再点棋盘空位放下</div>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="muted">我执：</span>
+        <button class="btn" id="btnPlayRed">红方（先手）</button>
+        <button class="btn" id="btnPlayBlack">黑方（后手）</button>
+        <span style="flex:1"></span>
+        <label class="muted">AI 深度
+          <input type="text" id="playDepth" value="12" style="width:52px;display:inline-block">
+        </label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn primary" id="btnPlayNew">新开一局</button>
+        <button class="btn" id="btnPlayUndo">悔棋</button>
+        <button class="btn" id="btnPlayFlip">翻转</button>
+        <button class="btn" id="btnPlayResign">认输</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="btnPlayEdit">编辑局面</button>
+        <span class="row" id="playEditPanel" style="display:none">
+          <button class="btn primary" id="btnPlayStart">用这个局面开局</button>
+          <button class="btn" id="btnPlayEditUndo">撤销编辑</button>
+          <button class="btn" id="btnPlayEditClear">清空棋盘</button>
+          <button class="btn" id="btnPlayEditStart">摆回开局</button>
+          <span class="muted" style="margin:0 2px 0 6px">该谁走：</span>
+          <button class="btn" id="btnPlayTurnRed">红方</button>
+          <button class="btn" id="btnPlayTurnBlack">黑方</button>
+        </span>
+      </div>
+      <div class="hint" id="playEditHelp" style="display:none">
+        编辑中：左键点棋子选中 → 再左键点空位放下 · 右键点棋子移出到棋子盒 ·
+        选中时点其他棋子 = 切换选中，点它自己 = 取消 · 摆好后点「用这个局面开局」
+      </div>
+      <div class="warnbox" id="playEditWarn"></div>
+      <div class="hint" id="playHint">先选「我执」哪一方，再点「新开一局」。AI 用「对弈深度」思考，
+        和教练模式的讲解深度是两套，互不影响。</div>
+    </div>
+    <div class="card">
+      <h2>着法记录 <span class="muted" id="playMvCount"></span></h2>
+      <div class="movelist" id="playMoveList"><span class="muted">还没有走子</span></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>对局信息</h2>
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <b id="playTurnLabel">还没开局</b>
+          <div class="muted" id="playMeta">—</div>
+        </div>
+        <div class="muted" id="playEval" style="text-align:right"></div>
+      </div>
+      <div class="stat sm" id="playStat" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>保存 / 导出</h2>
+      <div class="row">
+        <button class="btn" id="btnPlaySave">保存这盘棋</button>
+        <button class="btn" id="btnPlayCopy">复制棋谱</button>
+        <button class="btn" id="btnPlayExport">导出 .txt</button>
+        <button class="btn primary" id="btnPlayToReview">送去复盘</button>
+      </div>
+      <div class="hint">「送去复盘」会把棋谱填进复盘的输入框并切过去；
+        导出的 .txt 是纯棋谱（没有任何注释行），直接粘进复盘框也能认。</div>
+      <div id="saveListHost" style="margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== 复盘模式 ==================== -->
 <div class="wrap" id="viewReview" style="display:none">
   <div>
@@ -347,6 +483,7 @@ svg.board.free{cursor:crosshair}
         <button class="btn primary" id="btnReview">开始复盘</button>
       </div>
       <div class="hint">建议只放 20~60 手（深度 14 大约每手 0.3~1 秒）。太长的棋谱会明显变慢。</div>
+      <div class="hint" id="reviewFillNote" style="display:none;color:var(--ok)"></div>
       <div id="reviewProg" style="margin-top:10px;display:none">
         <div class="bar"><i id="reviewBar"></i></div>
         <div class="hint" id="reviewNote"></div>
@@ -374,6 +511,54 @@ svg.board.free{cursor:crosshair}
       <h2>AI 复盘报告 <span class="muted" id="reportState"></span></h2>
       <button class="btn" id="btnReport">生成复盘报告</button>
       <div class="md" id="reportBox" style="margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 设置 ==================== -->
+<div class="modal" id="settingsModal" style="display:none">
+  <div class="modalBox">
+    <h2>设置</h2>
+    <div class="setRow">
+      <label>讲解深度
+        <span class="sub">教练模式分析局面时的引擎深度（越高越准、越慢）</span></label>
+      <input type="text" id="setAnalyzeDepth">
+    </div>
+    <div class="setRow">
+      <label>对弈深度
+        <span class="sub">对弈模式里 AI 走子的深度，与讲解深度是两套、互不影响</span></label>
+      <input type="text" id="setPlayDepth">
+    </div>
+    <div class="setRow">
+      <label>复盘深度
+        <span class="sub">整盘复盘逐手分析用的深度</span></label>
+      <input type="text" id="setReviewDepth">
+    </div>
+    <div class="setRow">
+      <label>候选着法条数
+        <span class="sub">皮卡鱼 MultiPV：候选表最多列几条</span></label>
+      <input type="text" id="setMultipv">
+    </div>
+    <div class="setRow">
+      <label>讲解思考强度
+        <span class="sub">越低越快；none = 不思考</span></label>
+      <select id="setEffort">
+        <option value="none">none（最快）</option>
+        <option value="minimal">minimal</option>
+        <option value="low">low</option>
+        <option value="medium">medium</option>
+        <option value="high">high</option>
+        <option value="default">default（不指定）</option>
+      </select>
+    </div>
+    <div class="setRow">
+      <label><input type="checkbox" id="setCloud"> 分析时查象棋云库
+        <span class="sub">关掉能省几秒，但讲解就少了"人类实战怎么走"这一层</span></label>
+    </div>
+    <div class="hint" id="setHint"></div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end">
+      <button class="btn" id="btnSetCancel">取消</button>
+      <button class="btn primary" id="btnSetSave">保存</button>
     </div>
   </div>
 </div>
@@ -412,6 +597,7 @@ let selected = null, legalCache = [];
 let handPiece = null, handFrom = null;
 let cursorVb = null;          // 光标在棋盘 viewBox 坐标系里的位置（画"手上子"用）
 let validateTimer = null;
+let playValidateTimer = null; // 对弈模式摆局面的校验防抖（两个模式各一个计时器）
 
 /* ============ FEN ============ */
 function fenToBoard(fen){
@@ -799,43 +985,55 @@ function previewFromPlayed(){
 }
 
 /* ============ 棋盘绘制 ============ */
-function xy(rank, file){
-  const f = state.flip ? 8 - file : file;
-  const r = state.flip ? 9 - rank : rank;
+/* 棋盘坐标换算。flipOverride 不传时用教练模式的 state.flip；
+   对弈模式有自己的翻转状态（play.flip），所以这里必须能按参数算 ——
+   两边共用同一个函数，翻转逻辑才不会分裂成两套。 */
+function xy(rank, file, flipOverride){
+  const fl = (flipOverride === undefined) ? state.flip : flipOverride;
+  const f = fl ? 8 - file : file;
+  const r = fl ? 9 - rank : rank;
   return [PAD + f * CELL, PAD + (9 - r) * CELL];
 }
-function drawBoard(){
-  const pv = state.preview;
-  const b = displayBoard();          // 预演中 = 虚拟局面，否则 = 真实局面
-  let s = `<svg class="board${state.editing ? ' editing' : ''}${pv ? (pv.mode === 'free' ? ' free' : ' previewing') : ''}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
-  s += `<rect width="${W}" height="${H}" rx="10" fill="var(--board)"/>`;
+
+/* 棋盘"底盘"：底板 + 横线 + 竖线（中间断开＝河界）+ 九宫斜线 + 楚河汉界。
+   教练棋盘和对弈棋盘共用这一段 —— 复制一份出来迟早会画出两个不一样的棋盘。 */
+function boardBaseSvg(flip){
+  let s = `<rect width="${W}" height="${H}" rx="10" fill="var(--board)"/>`;
   // 横线
   for (let r = 0; r < 10; r++){
-    const [x1,y1] = xy(r,0), [x2,y2] = xy(r,8);
+    const [x1,y1] = xy(r,0,flip), [x2,y2] = xy(r,8,flip);
     s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--boardline)" stroke-width="1"/>`;
   }
   // 竖线（中间断开表示河界）
   for (let f = 0; f < 9; f++){
     if (f === 0 || f === 8){
-      const [x1,y1] = xy(0,f), [x2,y2] = xy(9,f);
+      const [x1,y1] = xy(0,f,flip), [x2,y2] = xy(9,f,flip);
       s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--boardline)" stroke-width="1"/>`;
     } else {
-      const [x1,y1] = xy(0,f), [x2,y2] = xy(4,f);
-      const [x3,y3] = xy(5,f), [x4,y4] = xy(9,f);
+      const [x1,y1] = xy(0,f,flip), [x2,y2] = xy(4,f,flip);
+      const [x3,y3] = xy(5,f,flip), [x4,y4] = xy(9,f,flip);
       s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--boardline)" stroke-width="1"/>`;
       s += `<line x1="${x3}" y1="${y3}" x2="${x4}" y2="${y4}" stroke="var(--boardline)" stroke-width="1"/>`;
     }
   }
   // 九宫斜线
   [[0,3,2,5],[0,5,2,3],[7,3,9,5],[7,5,9,3]].forEach(([r1,f1,r2,f2])=>{
-    const [x1,y1] = xy(r1,f1), [x2,y2] = xy(r2,f2);
+    const [x1,y1] = xy(r1,f1,flip), [x2,y2] = xy(r2,f2,flip);
     s += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--boardline)" stroke-width="1"/>`;
   });
   // 河界文字
-  const [rx, ry] = xy(4.5, 4);
+  const [rx, ry] = xy(4.5, 4, flip);
   s += `<text x="${rx}" y="${ry+6}" text-anchor="middle" font-size="15"
         fill="var(--boardline)" letter-spacing="7"
         font-family="KaiTi,'STKaiti',serif">楚河汉界</text>`;
+  return s;
+}
+
+function drawBoard(){
+  const pv = state.preview;
+  const b = displayBoard();          // 预演中 = 虚拟局面，否则 = 真实局面
+  let s = `<svg class="board${state.editing ? ' editing' : ''}${pv ? (pv.mode === 'free' ? ' free' : ' previewing') : ''}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+  s += boardBaseSvg(state.flip);
   // 上一步高亮（预演中＝高亮预演到的这一步，而不是真实对局的上一手）
   const hi = (pv && pv.idx >= 0) ? pv.steps[pv.idx] : state.lastMove;
   if (hi){
@@ -933,17 +1131,20 @@ function squareFromPixels(vx, vy, flip){
   return [flip ? 9 - rDisp : rDisp, flip ? 8 - fDisp : fDisp];
 }
 
-/* 把鼠标事件的屏幕像素换算成 viewBox 坐标（svg 有 viewBox，要按比例缩放） */
-function eventToSquare(ev){
-  const svg = document.querySelector('svg.board');
-  if (!svg) return null;
+/* 把鼠标事件的屏幕像素换算成 viewBox 坐标（svg 有 viewBox，要按比例缩放）。
+   棋盘元素优先取 ev.currentTarget —— 页面上现在有**两块**棋盘（教练 / 对弈），
+   document.querySelector('svg.board') 永远只会拿到第一块，点对弈棋盘就会算错格子。 */
+function eventToSquareIn(ev, flip){
+  const svg = (ev && ev.currentTarget) || document.querySelector('svg.board');
+  if (!svg || !ev) return null;
   const rect = svg.getBoundingClientRect();
   const vb = svg.viewBox.baseVal;
   const scale = (vb && vb.width && rect.width) ? vb.width / rect.width : 1;
   return squareFromPixels((ev.clientX - rect.left) * scale,
                           (ev.clientY - rect.top) * scale,
-                          state.flip);
+                          flip);
 }
+function eventToSquare(ev){ return eventToSquareIn(ev, state.flip); }
 
 function onBoardClick(ev){
   const sq = eventToSquare(ev);
@@ -1005,6 +1206,19 @@ function doMove(from, to, uci){
   refreshAll();
   document.getElementById('btnAnalyzeMove').disabled = false;
   setHint('已记录这一步（' + chinese + '）。点「讲解我这一步」，看看它和引擎推荐差多少、会被怎么惩罚。');
+  if (autoCalcOn()) runAutoCalc();
+}
+
+/* 「自动计算当前局势」：每走一步自动跑一次 analyze(false, false)。
+   两个参数都不能省 —— 只算不讲，不会去叫大模型，所以不花钱也不等讲解。
+   上一次还在算就直接跳过（别把引擎排队排成一串），预演/编辑中也不算。 */
+function autoCalcOn(){
+  const cb = document.getElementById('autoCalc');
+  return !!(cb && cb.checked);
+}
+function runAutoCalc(){
+  if (state.analyzeBusy || state.preview || state.editing) return;
+  analyze(false, false).catch(() => {});
 }
 
 /* ============ 局面编辑（不再依赖鲨鱼象棋） ============ */
@@ -1020,18 +1234,74 @@ const TYPE_ORDER = ['R','N','C','B','A','K','P'];
 
 function clearHand(){ handPiece = null; handFrom = null; }
 
-/* 编辑操作统一入口：先记撤销点，再看是否真的改了局面 */
-function editMutate(fn){
-  const beforeBoard = state.board.slice(), beforeRed = state.red;
-  fn();
-  if (state.red === beforeRed && boardKey(state.board) === boardKey(beforeBoard)) return false;
-  state.editUndo.push({board: beforeBoard, red: beforeRed});
-  if (state.editUndo.length > 300) state.editUndo.shift();
-  if (!state.editDirty){
-    state.editDirty = true;
+/* ---------- 编辑会话：同一个「编辑」，两个目标 ----------
+   教练模式编辑的是 state（画在 #boardHost），对弈模式编辑的是 play（画在 #playBoardHost）。
+   两边要的是同一套手感（选中→放下、右键移出、棋子盒、撤销），所以编辑逻辑只写一份，
+   靠 edObj() 换目标 —— 复制一份迟早会变成"两块棋盘两种手感"。
+   前提：两个编辑会话互斥（见 setEditMode / setPlayEditMode）。手上子 handPiece 是全局的，
+   真让两边同时编辑，这枚子到底跟着哪块棋盘都会说不清。
+   state 和 play 都有下面这几个字段，编辑逻辑只依赖它们：
+     board / red / flip / editing / editDirty / editUndo / preEdit */
+/* 编辑界面元素的 id 表：两块棋盘上的东西长得一样，但 id 必须区分开 —— 
+   同时存在两块棋盘时 getElementById('tray') 只会拿到教练那块。
+   写成函数而不是大对象常量，是为了让测试的沙箱能整段抓取（它只认单行 const）。 */
+function edIds(){
+  return edIsPlay()
+    ? {boardHost:'playBoardHost', tray:'ptray', trayRed:'ptrayRed', trayBlack:'ptrayBlack',
+       trayNote:'ptrayNote', ghost:'pHandGhost', mark:'pHoverMark', text:'pHoverText',
+       warn:'playEditWarn'}
+    : {boardHost:'boardHost', tray:'tray', trayRed:'trayRed', trayBlack:'trayBlack',
+       trayNote:'trayNote', ghost:'handGhost', mark:'hoverMark', text:'hoverText',
+       warn:'editWarn'};
+}
+const edIsPlay = () => !!play.editing;
+function edObj(){ return edIsPlay() ? play : state; }      // 正在编辑的那个局面对象
+function edAny(){ return !!(state.editing || play.editing); }
+const edFlip = () => edObj().flip;
+function edDraw(){ if (edIsPlay()) drawPlayBoard(); else drawBoard(); }
+function edUI(){ if (edIsPlay()) updatePlayEditUI(); else updateEditUI(); }
+const edId = key => edIds()[key];
+function edById(key){ return document.getElementById(edId(key)); }
+/* 编辑模式下重画时要拿到"自己那块"棋盘的 svg：两边的 .board 长得一样，
+   document.querySelector('svg.board') 永远只会拿到教练那块 —— 必须按宿主找。
+   宿主没有 querySelector 时（测试沙箱的假 DOM 就是这样）退回全局查找 */
+function edBoardSvg(){
+  const host = edById('boardHost');
+  if (host && host.querySelector) return host.querySelector('svg.board') || null;
+  return document.querySelector('svg.board');
+}
+/* 编辑改动"生效"后要清什么：教练模式清着法记录 + 讲解（编辑后的局面不是那些着法走出来的）；
+   对弈模式清对局记录，并把这一局标回"还没开局"—— 摆出来的局面必须点「用这个局面开局」才算数 */
+function edAfterChange(){
+  if (edIsPlay()){
+    play.history = []; play.lastMove = null; play.lastEval = null;
+    play.over = false; play.result = '';
+    play.selected = null; play.legalCache = []; play.started = false;
+    renderPlayMoveList(); renderPlayInfo(); updateLoadPlayBtn();
+  } else {
     clearPlayRecord();
   }
-  scheduleValidate();
+}
+function edValidate(){
+  if (!edAny()) return;
+  if (edIsPlay()) schedulePlayValidate(); else scheduleValidate();
+}
+/* 提示写到"自己那一栏"里：教练有 #statusHint，对弈有 #playHint */
+const edHint = t => (edIsPlay() ? setPlayHint(t) : setHint(t));
+
+/* 编辑操作统一入口：先记撤销点，再看是否真的改了局面 */
+function editMutate(fn){
+  const o = edObj();                     // 教练模式 = state，对弈模式 = play
+  const beforeBoard = o.board.slice(), beforeRed = o.red;
+  fn();
+  if (o.red === beforeRed && boardKey(o.board) === boardKey(beforeBoard)) return false;
+  o.editUndo.push({board: beforeBoard, red: beforeRed});
+  if (o.editUndo.length > 300) o.editUndo.shift();
+  if (!o.editDirty){
+    o.editDirty = true;
+    edAfterChange();
+  }
+  edValidate();
   return true;
 }
 
@@ -1075,21 +1345,22 @@ function clearPlayRecord(){
 
 /* ---------- 编辑模式下的棋盘点击 ---------- */
 function onEditClick(r, f){
-  const idx = r*9 + f, c = state.board[idx];
+  const o = edObj();
+  const idx = r*9 + f, c = o.board[idx];
   // 手上有子
   if (handPiece){
     const isSelf = !!(handFrom && handFrom[0] === r && handFrom[1] === f);
     if (isSelf){                                  // 规则 3：点它自己 → 取消选中
       const p = handPiece;
-      clearHand(); drawBoard(); updateEditUI();
-      setHint(`已取消选中，${describePiece(p)} 留在原处。`);
+      clearHand(); edDraw(); edUI();
+      edHint(`已取消选中，${describePiece(p)} 留在原处。`);
       return;
     }
     if (c){                                       // 规则 3：点其他棋子 → 切换选中
       const prev = handPiece, fromTray = !handFrom;
       handPiece = c; handFrom = [r, f];
-      drawBoard(); updateEditUI();
-      setHint(`改为选中 ${describePiece(c)}。${fromTray ? '' : describePiece(prev) + ' 已留在原处。'}` +
+      edDraw(); edUI();
+      edHint(`改为选中 ${describePiece(c)}。${fromTray ? '' : describePiece(prev) + ' 已留在原处。'}` +
               '再点一个空位放下。');
       return;
     }
@@ -1099,45 +1370,48 @@ function onEditClick(r, f){
   // 手上没子
   if (c){
     handPiece = c; handFrom = [r, f];
-    drawBoard(); updateEditUI();
-    setHint(`选中了 ${describePiece(c)}（棋子跟着鼠标）。左键点空位放下；` +
+    edDraw(); edUI();
+    edHint(`选中了 ${describePiece(c)}（棋子跟着鼠标）。左键点空位放下；` +
             '点其他棋子可切换选中；点它自己取消。');
   } else {
-    setHint('这一格是空的。左键点棋子可选中；右键点棋子可把它移出棋盘。');
+    edHint('这一格是空的。左键点棋子可选中；右键点棋子可把它移出棋盘。');
   }
 }
 
 function placeHand(idx){
   const piece = handPiece, from = handFrom;
   editMutate(() => {
-    const b = state.board.slice();
+    const o = edObj();
+    const b = o.board.slice();
     b[idx] = piece;
     if (from) b[from[0]*9+from[1]] = '';
-    state.board = b;
+    o.board = b;
   });
   clearHand();
-  drawBoard(); updateEditUI();
-  setHint(`已放下 ${describePiece(piece)}。`);
+  edDraw(); edUI();
+  edHint(`已放下 ${describePiece(piece)}。`);
 }
 
 /* 右键：把棋子移出棋盘，进棋子盒（编辑模式专用，顺手屏蔽浏览器右键菜单） */
 function onBoardContext(ev){
-  if (!state.editing) return;
+  if (!edAny()) return;
   ev.preventDefault();
-  const sq = eventToSquare(ev);
+  const sq = eventToSquareIn(ev, edFlip());
   if (!sq) return;
-  const r = sq[0], f = sq[1], idx = r*9 + f, c = state.board[idx];
-  if (!c){ setHint('这一格是空的，没有棋子可以移出。'); return; }
+  const o = edObj();
+  const r = sq[0], f = sq[1], idx = r*9 + f, c = o.board[idx];
+  if (!c){ edHint('这一格是空的，没有棋子可以移出。'); return; }
   if (handFrom && handFrom[0] === r && handFrom[1] === f) clearHand();
-  editMutate(() => { const b = state.board.slice(); b[idx] = ''; state.board = b; });
-  drawBoard(); updateEditUI();
-  setHint(`${describePiece(c)} 已移出棋盘，放到下面的棋子盒里了（左键点它就能放回来）。`);
+  editMutate(() => { const b = o.board.slice(); b[idx] = ''; o.board = b; });
+  edDraw(); edUI();
+  edHint(`${describePiece(c)} 已移出棋盘，放到棋子盒里了（左键点它就能放回来）。`);
 }
 
 /* 棋子盒：标准子力减去盘上的，剩下的就是"已离盘"的棋子 */
 function trayPieces(){
+  const board = edObj().board;
   const on = {red:{}, black:{}};
-  for (const c of state.board){
+  for (const c of board){
     if (!c) continue;
     const g = on[isRed(c) ? 'red' : 'black'], k = c.toUpperCase();
     g[k] = (g[k] || 0) + 1;
@@ -1153,9 +1427,9 @@ function trayPieces(){
 }
 
 function renderTray(){
-  const box = document.getElementById('tray');
+  const box = edById('tray');
   if (!box) return;
-  if (!state.editing){ box.style.display = 'none'; return; }
+  if (!edAny()){ box.style.display = 'none'; return; }
   box.style.display = '';
   const t = trayPieces(), S = 38, R = 14.5;
   let total = 0;
@@ -1172,36 +1446,38 @@ function renderTray(){
               width="${S}" height="${S}" viewBox="0 0 ${S} ${S}">`
          + pieceMarkup(p, red, S/2, S/2, R) + `</svg>`;
     });
-    document.getElementById(red ? 'trayRed' : 'trayBlack').innerHTML = h;
+    edById(red ? 'trayRed' : 'trayBlack').innerHTML = h;
   }
-  document.getElementById('trayNote').textContent =
+  edById('trayNote').textContent =
     total ? `（${total} 枚不在盘上）` : '（一枚不缺）';
+  // 用 document 上取（两个棋子盒共用同一批 handler）—— 假 DOM 只给 document 实现了
+  // querySelectorAll，写 box.querySelectorAll 在测试沙箱里会炸
   document.querySelectorAll('.tray .tp').forEach(el => {
     el.onclick = () => onTrayClick(el.dataset.piece);
   });
 }
 
 function onTrayClick(piece){
-  if (!state.editing) return;
+  if (!edAny()) return;
   // 必须确认棋子盒里真的有这一枚 —— 否则会凭空"造子"（盘上子力超标准）
   const side = isRed(piece) ? 'red' : 'black';
   if (!trayPieces()[side].includes(piece)){
-    setHint(`${describePiece(piece)} 已经全部在棋盘上了，棋子盒里没有可拿的。`);
+    edHint(`${describePiece(piece)} 已经全部在棋盘上了，棋子盒里没有可拿的。`);
     return;
   }
   if (handPiece === piece && !handFrom){        // 再点一次 = 取消选中
-    clearHand(); drawBoard(); updateEditUI();
-    setHint('已取消选中。');
+    clearHand(); edDraw(); edUI();
+    edHint('已取消选中。');
     return;
   }
   handPiece = piece; handFrom = null;
-  drawBoard(); updateEditUI();
-  setHint(`拿起了 ${describePiece(piece)}（来自棋子盒）。左键点棋盘空位放下；点其他棋子会切换选中。`);
+  edDraw(); edUI();
+  edHint(`拿起了 ${describePiece(piece)}（来自棋子盒）。左键点棋盘空位放下；点其他棋子会切换选中。`);
 }
 
 /* ---------- "手上子"跟随鼠标 ---------- */
 function positionGhost(){
-  const g = document.getElementById('handGhost');
+  const g = edById('ghost');
   if (!g) return;
   if (!handPiece || !cursorVb){ g.style.display = 'none'; return; }
   g.style.display = '';
@@ -1210,8 +1486,8 @@ function positionGhost(){
 }
 
 function onBoardMove(ev){
-  if (!state.editing) return;
-  const svg = document.querySelector('svg.board');
+  if (!edAny()) return;
+  const svg = edBoardSvg();
   if (!svg) return;
   const rect = svg.getBoundingClientRect();
   const vb = svg.viewBox.baseVal;
@@ -1220,15 +1496,15 @@ function onBoardMove(ev){
   cursorVb = {x: vx, y: vy};
   positionGhost();
 
-  const mark = document.getElementById('hoverMark');
-  const txt = document.getElementById('hoverText');
+  const mark = edById('mark');
+  const txt = edById('text');
   if (!mark || !txt) return;
-  const sq = squareFromPixels(vx, vy, state.flip);
+  const sq = squareFromPixels(vx, vy, edFlip());
   if (!sq || !handPiece){
     mark.style.display = 'none'; txt.style.display = 'none'; return;
   }
-  const [x, y] = xy(sq[0], sq[1]);
-  const occ = !!state.board[sq[0]*9 + sq[1]];
+  const [x, y] = xy(sq[0], sq[1], edFlip());
+  const occ = !!edObj().board[sq[0]*9 + sq[1]];
   const isSelf = !!(handFrom && handFrom[0] === sq[0] && handFrom[1] === sq[1]);
   // 悬停时就预告"点下去会发生什么"，避免"切换选中 / 放下"分不清
   const act = isSelf ? ['取消选中', 'var(--dim)']
@@ -1244,7 +1520,7 @@ function onBoardMove(ev){
 function onBoardLeave(){
   cursorVb = null;
   positionGhost();
-  const mark = document.getElementById('hoverMark'), txt = document.getElementById('hoverText');
+  const mark = edById('mark'), txt = edById('text');
   if (mark) mark.style.display = 'none';
   if (txt) txt.style.display = 'none';
 }
@@ -1253,6 +1529,7 @@ function onBoardLeave(){
 function setEditMode(on){
   if (on === state.editing) return;
   if (on){
+    if (play.editing) setPlayEditMode(false);  // 编辑会话互斥：手上子只有一份
     exitPreview();                 // 进编辑前先把预演收掉（预演棋盘不是真实局面）
     // 进编辑前存一份快照：若最后什么都没改就退出，原样还回去
     state.preEdit = {board: state.board.slice(), red: state.red,
@@ -1312,11 +1589,95 @@ function updateEditUI(){
   renderTray();
 }
 
+/* ---------- 对弈模式的「编辑局面」（摆残局 / 试招） ----------
+   和教练模式共用上面那一整套编辑逻辑（靠 edObj() 换目标），这里只管三件事：
+   开场与收场、工具栏和棋子盒的显隐、以及摆完之后的「用这个局面开局」。 */
+function setPlayEditMode(on){
+  if (on === !!play.editing) return;
+  if (on){
+    if (play.busy){ setPlayHint('AI 正在思考，等它走完再摆局面。'); return; }
+    if (state.editing) setEditMode(false);   // 编辑会话互斥：手上子只有一份
+    if (!play.board.length){                 // 还没开过局：先铺上标准开局当底稿
+      play.board = fenToBoard(window.START_FEN); play.red = true;
+    }
+    if (!play.startFen) play.startFen = window.START_FEN;
+    play.preEdit = {board: play.board.slice(), red: play.red,
+                    history: play.history.slice(),
+                    lastMove: play.lastMove ? Object.assign({}, play.lastMove) : null,
+                    startFen: play.startFen, started: play.started,
+                    over: play.over, result: play.result, lastEval: play.lastEval};
+    play.editing = true; play.editDirty = false; play.editUndo = [];
+    clearHand(); play.selected = null; play.legalCache = []; cursorVb = null;
+    setPlayHint('摆局面：左键点棋子选中 → 再左键点空位放下；右键点棋子移出到棋子盒；' +
+                '摆好后点「用这个局面开局」。');
+  } else {
+    play.editing = false;
+    clearHand(); play.selected = null; play.legalCache = []; cursorVb = null;
+    const pre = play.preEdit;
+    if (pre && !play.editDirty){
+      // 没改过就原样还回去 —— 随手点一下不该把棋局弄乱（和教练模式一个规矩）
+      play.board = pre.board.slice(); play.red = pre.red;
+      play.history = pre.history; play.lastMove = pre.lastMove;
+      play.startFen = pre.startFen; play.started = pre.started;
+      play.over = pre.over; play.result = pre.result; play.lastEval = pre.lastEval;
+      setPlayHint('已退出编辑（没有改动），局面回到编辑之前的样子。');
+    } else {
+      setPlayHint('已退出编辑。想按摆好的局面下就点「用这个局面开局」，' +
+                  '想回到标准开局就点「新开一局」。');
+    }
+    play.preEdit = null; play.editUndo = []; play.editDirty = false;
+    const w = document.getElementById('playEditWarn');
+    if (w){ w.style.display = 'none'; w.innerHTML = ''; }
+  }
+  updatePlayEditUI();
+  updateLoadPlayBtn();
+  drawPlayBoard(); renderPlayMoveList(); renderPlayInfo();
+}
+
+/* 摆好之后正式开局：把当前局面当成这一局的起点。
+   必须先退出编辑再取 FEN —— 没有改动时"退出"会把局面还原，
+   先取的话取到的是那个已经作废的局面。 */
+async function startPlayFromEdit(){
+  if (!play.editing){ setPlayHint('先点「编辑局面」摆好，再点这里开局。'); return; }
+  setPlayEditMode(false);
+  play.startFen = playFen();          // 这一局的起点 = 摆出来的局面（复盘要用）
+  play.board = fenToBoard(play.startFen);
+  play.started = true; play.over = false; play.result = '';
+  play.history = []; play.lastMove = null; play.lastEval = null;
+  play.selected = null; play.legalCache = [];
+  updatePlayEditUI(); updateLoadPlayBtn();
+  drawPlayBoard(); renderPlayMoveList(); renderPlayInfo();
+  setPlayHint(`已按摆好的局面开局：你执<b>${humanSideCn()}</b>，AI 执<b>${aiSideCn()}</b>` +
+              `（深度 ${play.depth}），现在轮到${play.red ? '红方' : '黑方'}走。`);
+  await playMaybeAi();                // 轮不到你走（比如你执黑）就先让 AI 走一手
+}
+
+function updatePlayEditUI(){
+  const on = !!play.editing;
+  const el = id => document.getElementById(id);
+  const vp = el('viewPlay');
+  if (vp) vp.classList.toggle('editing', on);
+  const btn = el('btnPlayEdit');
+  if (!btn) return;
+  btn.classList.toggle('primary', on);
+  btn.textContent = on ? '退出编辑' : '编辑局面';
+  el('playEditPanel').style.display = on ? 'flex' : 'none';
+  el('playEditHelp').style.display = on ? '' : 'none';
+  el('btnPlayTurnRed').classList.toggle('primary', on && play.red);
+  el('btnPlayTurnBlack').classList.toggle('primary', on && !play.red);
+  if (!on){
+    el('ptray').style.display = 'none';
+    el('playEditWarn').style.display = 'none';
+    return;
+  }
+  renderTray();
+}
+
 function setTurn(red){
-  if (!state.editing) return;
-  editMutate(() => { state.red = red; });
-  updateEditUI(); drawBoard();
-  setHint(`已设置：现在轮到${red ? '红方' : '黑方'}走棋。`);
+  if (!edAny()) return;
+  editMutate(() => { edObj().red = red; });
+  edUI(); edDraw();
+  edHint(`已设置：现在轮到${red ? '红方' : '黑方'}走棋。`);
 }
 
 /* ---------- 局面合法性提示（编辑后实时校验） ---------- */
@@ -1339,6 +1700,32 @@ async function validateNow(){
   }
   box.style.display = '';
   box.innerHTML = '⚠ 这个局面还不能分析：' +
+    (r.problems || []).map(escapeHtml).join('；') +
+    '<br><span class="muted">继续编辑修正它，或点「撤销编辑」退回上一步。</span>';
+}
+
+/* 对弈模式摆局面时的同一套校验，只是写进 #playEditWarn、用的是 play 的局面。
+   这比对弈本身更要紧：摆出个"没有将"或"双将"的局面，引擎会算出没法解释的东西。 */
+function schedulePlayValidate(){
+  if (!play.editing) return;
+  if (playValidateTimer) clearTimeout(playValidateTimer);
+  playValidateTimer = setTimeout(playValidateNow, 250);
+}
+
+async function playValidateNow(){
+  const box = document.getElementById('playEditWarn');
+  if (!box) return;
+  if (!play.editing){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  let r;
+  try{ r = await jget('/api/validate?fen=' + encodeURIComponent(playFen())); }
+  catch(e){ return; }
+  if (!r || !r.ok) return;
+  if (r.valid){
+    box.style.display = 'none'; box.innerHTML = '';
+    return;
+  }
+  box.style.display = '';
+  box.innerHTML = '⚠ 这个局面还不能开局：' +
     (r.problems || []).map(escapeHtml).join('；') +
     '<br><span class="muted">继续编辑修正它，或点「撤销编辑」退回上一步。</span>';
 }
@@ -1370,7 +1757,15 @@ function refreshAll(){
   updatePreviewUI();
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.view === view));
   document.getElementById('viewCoach').style.display = view === 'coach' ? '' : 'none';
+  document.getElementById('viewPlay').style.display = view === 'play' ? '' : 'none';
   document.getElementById('viewReview').style.display = view === 'review' ? '' : 'none';
+  // 必须在上面那段禁用逻辑之后调用：它会一并考虑"预演中"和"有没有对弈棋局"
+  updateLoadPlayBtn();
+  // 对弈棋盘只在切到对弈视图时画（不然每次走子都要多渲染一块 SVG）
+  if (view === 'play'){
+    drawPlayBoard(); renderPlayMoveList(); renderPlayInfo(); updatePlaySideUI();
+    updatePlayEditUI();
+  }
 }
 
 function renderMoveList(){
@@ -1684,13 +2079,20 @@ function mdToHtml(md){
 
 /* ============ 复盘 ============ */
 let lastJob = null;
+/* 复盘输入框里这盘棋的起点局面。空 = 标准开局。
+   只有「送去复盘」会设它（并把起点一起带给服务端）；手动改输入框就清零 —— 
+   在别人的棋谱上沿用上一盘的起点，比从标准开局算还糟。 */
+let reviewStartFen = '';
+
 async function startReview(){
   const text = document.getElementById('reviewText').value;
   const depth = +document.getElementById('reviewDepth').value || 14;
   if (!text.trim()) return alert('请先粘贴棋谱');
   document.getElementById('reviewProg').style.display = '';
   document.getElementById('reviewNote').textContent = '提交中…';
-  const res = await jpost('/api/review', {text, depth});
+  const body = {text, depth};
+  if (reviewStartFen && reviewStartFen !== window.START_FEN) body.start_fen = reviewStartFen;
+  const res = await jpost('/api/review', body);
   if (!res.ok) return alert(res.error || '提交失败');
   lastJob = res.job_id;
   poll(lastJob);
@@ -1865,6 +2267,589 @@ function newGame(){
 }
 document.getElementById('btnReset').onclick = newGame;
 
+/* ==================== 对弈模式 ====================
+   和教练模式是**两盘棋**：
+     · play 状态 + #playBoardHost 这块棋盘都是独立的 —— 在对弈里走子
+       不会碰掉教练模式的讲解、追问、预演（反过来也一样）
+     · 两边只有两条通道：「读取对弈棋局」（对弈 → 教练）和「送去复盘」
+       （对弈 → 复盘），加上共用的 boardBaseSvg / xy / 规则接口
+   为什么非得独立：需求是"教练模式一键读取对弈棋局"。要是两边共用一块棋盘，
+   就没有"读取"这个动作了 —— 谁动谁看一眼就知道。
+   另外 AI 的走子深度走 play.depth（config 里的 play_depth），
+   和教练模式的 analyze_depth 是两套，互不影响。 */
+const PLAY_SAVE_KEY = 'xq_play_saves';
+let play = {
+  board: [], red: true, history: [], lastMove: null,
+  flip: false,
+  aiSide: 'black',        // AI 执哪一方：'red' | 'black'
+  depth: 12,
+  busy: false,            // AI 正在思考（期间禁止人走子 / 悔棋 / 换边）
+  over: false, result: '',
+  started: false,
+  selected: null, legalCache: [],
+  lastEval: null,         // 最近一次 AI 走子的评分，右栏显示用
+  /* 这一局的起点局面。标准开局之外的值 = 用「编辑局面」摆出来的残局/试招，
+     它必须跟着棋局走：存档要存、送去复盘要一起给（否则复盘会从标准开局算起，全错） */
+  startFen: '',
+  /* 下面四个和 state 上的同名字段一一对应 —— 编辑逻辑靠它们做到"一套代码两个目标"，
+     改这里记得同步看 state 那边的定义 */
+  editing: false, editDirty: false, editUndo: [], preEdit: null
+};
+
+function setPlayHint(t){ document.getElementById('playHint').innerHTML = t; }
+function playFen(){ return boardToFen(play.board, play.red); }
+const humanSide = () => (play.aiSide === 'red' ? 'black' : 'red');
+const isHumanTurn = () => (play.red ? 'red' : 'black') === humanSide();
+const humanSideCn = () => (humanSide() === 'red' ? '红方' : '黑方');
+const aiSideCn = () => (play.aiSide === 'red' ? '红方' : '黑方');
+
+/* ---------- 画对弈棋盘：复用 boardBaseSvg 底盘，棋子/高亮/绿点各画各的 ----------
+   编辑态（play.editing）下多画三样和教练棋盘一样的东西：手上子的虚影、跟随光标的棋子、
+   "点下去会发生什么"的悬停提示。id 一律带 p 前缀 —— 两块棋盘同时存在时，
+   getElementById('handGhost') 只会拿到教练那块，不区分就会画到别人的棋盘上去。 */
+function drawPlayBoard(){
+  const ed = !!play.editing;
+  let s = `<svg class="board play${ed ? ' editing' : ''}" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`;
+  s += boardBaseSvg(play.flip);
+  // 上一步高亮
+  if (play.lastMove){
+    [play.lastMove.from, play.lastMove.to].forEach(p => {
+      const [x,y] = xy(p[0], p[1], play.flip);
+      s += `<circle cx="${x}" cy="${y}" r="${CELL*0.46}" fill="none"
+            stroke="var(--accent)" stroke-width="2.5" opacity="0.85"/>`;
+    });
+  }
+  // 选中框（编辑模式 = 手上拿着的那枚棋子的原格）
+  if (ed && handFrom){
+    const [x,y] = xy(handFrom[0], handFrom[1], play.flip);
+    s += `<circle cx="${x}" cy="${y}" r="${CELL*0.47}" fill="none"
+          stroke="var(--blue)" stroke-width="3" stroke-dasharray="7 5"/>`;
+  } else if (play.selected){
+    const [x,y] = xy(play.selected[0], play.selected[1], play.flip);
+    s += `<circle cx="${x}" cy="${y}" r="${CELL*0.47}" fill="none"
+          stroke="var(--blue)" stroke-width="3"/>`;
+  }
+  // 棋子
+  for (let r = 0; r < 10; r++) for (let f = 0; f < 9; f++){
+    const c = play.board[r*9+f];
+    if (!c) continue;
+    const [x,y] = xy(r,f,play.flip);
+    // 编辑模式下被"拿在手上"的那一枚：原格只留虚影
+    const held = !!(ed && handFrom && handFrom[0] === r && handFrom[1] === f);
+    s += `<g class="piece" data-r="${r}" data-f="${f}"${held ? ' opacity="0.25"' : ''}>`
+       + pieceMarkup(c, isRed(c), x, y, CELL*0.42, held) + `</g>`;
+  }
+  // 可落点绿点（画在棋子之后，吃子时也看得见）
+  play.legalCache.forEach(m => {
+    const [x,y] = xy(m.to[0], m.to[1], play.flip);
+    s += `<circle cx="${x}" cy="${y}" r="${CELL*0.15}" fill="var(--green)"
+          opacity="0.8" pointer-events="none"/>`;
+  });
+  if (play.over && !ed){
+    s += `<text x="${PAD*0.45}" y="${PAD*0.62}" font-size="13" font-weight="700"
+          fill="var(--bad)" font-family="KaiTi,'STKaiti',serif">本局结束</text>`;
+  }
+  if (ed){
+    const R = CELL * 0.42;
+    s += `<g id="povl" pointer-events="none">`;
+    if (handPiece){
+      s += `<g id="pHandGhost" opacity="0.9" style="display:none">`
+         + pieceMarkup(handPiece, isRed(handPiece), 0, 0, R) + `</g>`;
+    }
+    s += `<circle id="pHoverMark" r="${R}" fill="none" stroke="var(--green)"
+            stroke-width="2.2" stroke-dasharray="6 4" style="display:none"/>
+          <text id="pHoverText" text-anchor="middle" font-size="12.5" font-weight="700"
+            fill="var(--green)" style="display:none"></text></g>`;
+  }
+  s += `</svg>`;
+  const host = document.getElementById('playBoardHost');
+  if (!host) return;
+  host.innerHTML = s;
+  // 假 DOM 下宿主没有 querySelector，所以要先问一句再调（测试要能跑完不炸）
+  const svg = host.querySelector ? host.querySelector('svg.board') : null;
+  if (svg){
+    svg.addEventListener('click', onPlayBoardClick);
+    // 编辑模式：右键移出棋子 + 手上子跟随鼠标（和教练棋盘同一套处理函数）
+    svg.addEventListener('contextmenu', onBoardContext);
+    svg.addEventListener('mousemove', onBoardMove);
+    svg.addEventListener('mouseleave', onBoardLeave);
+  }
+  positionGhost();      // 重建 DOM 后把手上子摆回光标处
+}
+
+function onPlayBoardClick(ev){
+  const sq = eventToSquareIn(ev, play.flip);
+  if (sq) onPlaySquare(sq[0], sq[1]);
+}
+
+/* ---------- 对局控制 ---------- */
+function playReset(){
+  play.board = fenToBoard(window.START_FEN);
+  play.red = true;                       // 象棋固定红先
+  play.startFen = window.START_FEN;      // 这一局的起点（标准开局；摆出来的局面另算）
+  play.history = []; play.lastMove = null;
+  play.over = false; play.result = '';
+  play.selected = null; play.legalCache = [];
+  play.lastEval = null;
+  play.started = true;
+  drawPlayBoard(); renderPlayMoveList(); renderPlayInfo();
+  updatePlaySideUI(); updateLoadPlayBtn(); updatePlayEditUI();
+}
+
+async function playNew(){
+  if (play.busy){ setPlayHint('AI 正在思考，等它走完再开新局。'); return; }
+  if (play.editing) setPlayEditMode(false);   // 摆局面的中途点新开一局 = 放弃摆的那个局面
+  const d = parseInt(document.getElementById('playDepth').value, 10);
+  play.depth = Math.max(1, Math.min(40, isNaN(d) ? (play.depth || 12) : d));
+  document.getElementById('playDepth').value = play.depth;
+  playReset();
+  setPlayHint(`新开一局：你执<b>${humanSideCn()}</b>，AI 执<b>${aiSideCn()}</b>（深度 ${play.depth}）。`);
+  await playMaybeAi();
+}
+
+async function setPlaySide(aiSide){
+  if (play.busy){ setPlayHint('AI 正在思考，等它走完再换边。'); return; }
+  play.aiSide = aiSide;
+  updatePlaySideUI();
+  if (play.editing){
+    // 正在摆局面：只换执方、不动棋盘 —— 摆好的东西不能因为换个边就没了
+    setPlayHint(`已改为你执<b>${humanSideCn()}</b>、AI 执<b>${aiSideCn()}</b>。` +
+                '摆好后点「用这个局面开局」。');
+    renderPlayInfo();
+    return;
+  }
+  if (!play.started || !play.history.length){
+    // 还没真正走过子 → 直接按新执方重开，不用再点一次「新开一局」
+    playReset();
+    setPlayHint(`你执<b>${humanSideCn()}</b>，AI 执<b>${aiSideCn()}</b>（深度 ${play.depth}）。`);
+    await playMaybeAi();
+  } else {
+    setPlayHint('已换执方 —— 点「新开一局」按新执方重开；当前这盘不受影响，' +
+                '可以接着下或者「送去复盘」。');
+  }
+  renderPlayInfo();
+}
+
+function updatePlaySideUI(){
+  const r = document.getElementById('btnPlayRed');
+  const b = document.getElementById('btnPlayBlack');
+  if (!r || !b) return;
+  // 高亮 = 我执那一方（AI 执黑时我执红）
+  r.classList.toggle('primary', play.aiSide === 'black');
+  b.classList.toggle('primary', play.aiSide === 'red');
+}
+
+/* ---------- 走子 ---------- */
+function playDoMove(from, to, uci, chineseOverride){
+  const fenBefore = playFen();
+  const b = play.board.slice();
+  b[to[0]*9+to[1]] = b[from[0]*9+from[1]];
+  b[from[0]*9+from[1]] = '';
+  play.board = b;
+  play.red = !play.red;
+  const h = {fenBefore, uci, from, to,
+             chinese: chineseOverride || guessChinese(fenBefore, from, to)};
+  play.history.push(h);
+  play.lastMove = h;
+  play.selected = null; play.legalCache = [];
+  updateLoadPlayBtn();
+}
+
+async function onPlaySquare(r, f){
+  // 编辑中：点棋盘是"摆子"，走的是编辑那一套（和教练棋盘完全同一份代码）
+  if (play.editing) return onEditClick(r, f);
+  if (play.busy){ setPlayHint('AI 正在思考，稍等一下。'); return; }
+  if (!play.started){
+    setPlayHint('这一局还没开始：点「新开一局」回到标准开局，' +
+                '或者用「编辑局面」摆一个残局/试招，再点「用这个局面开局」。');
+    return;
+  }
+  if (play.over){ setPlayHint('这局已经结束了，点「新开一局」再来一盘。'); return; }
+  if (!isHumanTurn()){ setPlayHint('现在是 AI 走棋，等它走完。'); return; }
+
+  const c = play.board[r*9+f];
+  if (play.selected){
+    const mv = play.legalCache.find(m => m.to[0] === r && m.to[1] === f);
+    if (mv){
+      playDoMove(play.selected, [r,f], mv.uci, mv.chinese);
+      drawPlayBoard(); renderPlayMoveList(); renderPlayInfo();
+      await playCheckStuck();
+      if (!play.over) await playMaybeAi();
+      return;
+    }
+    play.selected = null; play.legalCache = []; drawPlayBoard();
+  }
+  if (c && isRed(c) === play.red){
+    play.selected = [r,f];
+    // 和教练模式一样：局面可能不合法（比如从存档载入坏的），这里必须容错
+    try{
+      const res = await jget('/api/legal?fen=' + encodeURIComponent(playFen()));
+      if (res && res.ok === false){
+        play.selected = null; drawPlayBoard();
+        setPlayHint('当前局面列不出着法：' +
+                    escapeHtml(res.error || (res.problems || []).join('；')));
+        return;
+      }
+      play.legalCache = ((res && res.moves) || [])
+        .filter(m => m.from[0] === r && m.from[1] === f);
+    }catch(e){
+      play.legalCache = [];
+      setPlayHint('取合法着法失败：' + escapeHtml(e.message));
+    }
+    drawPlayBoard();
+  }
+}
+
+/* 轮到某一方却一步都走不出来 = 将死或困毙（象棋规则里都判走子方负）。
+   AI 走完之后要拿这个查一次"人还能不能走"，否则把人将死了界面还在等他走子。 */
+async function playCheckStuck(){
+  let res = null;
+  try{
+    res = await jget('/api/legal?fen=' + encodeURIComponent(playFen()));
+  }catch(e){ return false; }
+  if (!res || res.ok !== true || !res.valid) return false;
+  if ((res.moves || []).length) return false;
+  const who = play.red ? '红方' : '黑方';
+  const win = play.red ? '黑方' : '红方';
+  playEnd(`${win}胜（${who}${res.in_check ? '被将死' : '无着可走（困毙）'}）`);
+  return true;
+}
+
+/* 轮到 AI 就走一步 —— 所有"该 AI 了"的分支都从这里进。
+   摆局面的过程中（play.editing）一步都不许走，否则你还在摆、它已经动了。 */
+async function playMaybeAi(){
+  if (play.editing || !play.started || play.over || play.busy) return;
+  if ((play.red ? 'red' : 'black') !== play.aiSide) return;
+  await playAiMove();
+}
+
+async function playAiMove(){
+  if (play.over || play.busy) return;
+  play.busy = true;
+  renderPlayInfo();
+  setPlayHint(`<span class="spin"></span>AI 正在思考（深度 ${play.depth}）…`);
+  try{
+    const res = await jpost('/api/bestmove', {fen: playFen(), depth: play.depth});
+    if (!res.ok){ playEnd('出错了：' + (res.error || 'AI 走子失败')); return; }
+    if (res.game_over){ playEnd(res.result || '对局结束'); return; }
+    const fr = uciToFr(res.uci);
+    playDoMove(fr.from, fr.to, res.uci, res.chinese);
+    play.lastEval = res;
+    await playCheckStuck();          // AI 这一手有没有把人将死
+  }catch(e){
+    playEnd('出错了：' + escapeHtml(e.message));
+  }finally{
+    play.busy = false;
+  }
+  drawPlayBoard(); renderPlayMoveList(); renderPlayInfo();
+  if (!play.over) setPlayHint(`AI 走了 <b>${escapeHtml((play.lastMove || {}).chinese || '')}</b>，轮到你了。`);
+}
+
+function playEnd(result){
+  if (play.editing) return;              // 摆局面时不该判终局
+  play.over = true;
+  play.result = result || '对局结束';
+  play.selected = null; play.legalCache = [];
+  drawPlayBoard(); renderPlayMoveList(); renderPlayInfo();
+  setPlayHint(`<b class="playOver">${escapeHtml(play.result)}</b>` +
+              ' —— 可以「送去复盘」逐手讲解，或者「新开一局」。');
+}
+
+/* 悔棋：退到"上一步该我走"那个局面。
+   人和 AI 交替走子，所以一直退到"又轮到人走"就对了 ——
+   人先手时退 2 手（我一手 + AI 回应），AI 先手时退 2 手同理，不用写死步数。
+   但必须先确认"人自己走过棋"：否则 AI 先手刚走完第 1 手时点悔棋，
+   会把 AI 的先手棋也退掉，局面变成轮到 AI 走而人点不动棋盘（死锁）。 */
+function playUndo(){
+  // 编辑模式下「悔棋」= 撤销一步编辑（和教练模式同一个习惯）
+  if (play.editing) return undoEdit();
+  if (play.busy){ setPlayHint('AI 正在思考，等它走完再悔棋。'); return; }
+  if (!play.history.length){ setPlayHint('这局还没走过子，没得悔。'); return; }
+  const humanRed = humanSide() === 'red';
+  const moverRed = h => h.fenBefore.trim().split(/\s+/)[1] !== 'b';
+  if (!play.history.some(h => moverRed(h) === humanRed)){
+    setPlayHint('这局你还没走过棋（AI 刚走完先手），没得悔 —— 直接下就是了。');
+    return;
+  }
+  let guard = 0;
+  while (play.history.length && guard++ < 4){
+    const h = play.history.pop();
+    play.board = fenToBoard(h.fenBefore);
+    play.red = moverRed(h);
+    if (play.red === humanRed) break;    // 退到轮到人走为止
+  }
+  play.lastMove = play.history.length ? play.history[play.history.length - 1] : null;
+  play.over = false; play.result = '';
+  play.selected = null; play.legalCache = [];
+  play.lastEval = null;
+  drawPlayBoard(); renderPlayMoveList(); renderPlayInfo(); updateLoadPlayBtn();
+  setPlayHint('已悔棋，轮到你走。');
+}
+
+/* ---------- 右栏：着法记录 + 对局信息 ---------- */
+function renderPlayMoveList(){
+  const box = document.getElementById('playMoveList');
+  const cnt = document.getElementById('playMvCount');
+  if (cnt) cnt.textContent = play.history.length ? `（${play.history.length} 手）` : '';
+  if (!box) return;
+  if (!play.history.length){ box.innerHTML = '<span class="muted">还没有走子</span>'; return; }
+  let html = '', redNo = 0;
+  const startRed = playStartRed();       // 摆出来的局面可能是黑先，编号要跟着走
+  play.history.forEach((h, i) => {
+    const moverRed = (i % 2 === 0) ? startRed : !startRed;
+    const lbl = moverRed ? `${++redNo}.` : '';
+    html += `<span class="mv" title="${escapeHtml(h.uci)}">${lbl}${h.chinese || h.uci}</span> `;
+  });
+  box.innerHTML = html;
+}
+
+function renderPlayInfo(){
+  const el = document.getElementById('playTurnLabel');
+  const meta = document.getElementById('playMeta');
+  const ev = document.getElementById('playEval');
+  const st = document.getElementById('playStat');
+  if (!el || !meta || !ev || !st) return;
+  if (!play.started){
+    el.textContent = '还没开局'; meta.textContent = '—';
+    ev.innerHTML = ''; st.innerHTML = '';
+    return;
+  }
+  if (play.over) el.innerHTML = '<span class="playOver">本局结束</span>';
+  else if (play.busy) el.innerHTML = '<span class="spin"></span>AI 思考中…';
+  else el.innerHTML = `${play.red ? '红方' : '黑方'}走棋 · ` +
+                      `<b>${isHumanTurn() ? '你' : 'AI'}</b>`;
+  meta.textContent = playFen();
+
+  const le = play.lastEval;
+  if (le && le.score_red !== null && le.score_red !== undefined){
+    const cp = le.score_red;
+    // 中式配色：红优用红、黑优用绿
+    const col = cp > 30 ? 'var(--red)' : (cp < -30 ? 'var(--green)' : 'var(--dim)');
+    ev.innerHTML = `<span style="color:${col}">红方视角 ${cpText(cp)}（${bandOf(cp)}）</span>` +
+      `<div class="muted">AI 上一步 ${escapeHtml(le.chinese || '')}` +
+      ` · 深度 ${le.depth} · ${le.elapsed}s</div>`;
+  } else if (play.over){
+    ev.innerHTML = `<span class="playOver">${escapeHtml(play.result)}</span>`;
+  } else ev.innerHTML = '';
+
+  st.innerHTML =
+    `<div><b>${play.history.length}</b><span>已走手数</span></div>` +
+    `<div><b>${play.depth}</b><span>AI 深度</span></div>` +
+    `<div><b>${play.aiSide === 'red' ? '红' : '黑'}</b><span>AI 执方</span></div>` +
+    `<div><b>${(play.startFen && play.startFen !== window.START_FEN) ? '自设' : '标准'}</b>` +
+    `<span>起点局面</span></div>` +
+    `<div><b>${play.over ? '已结束' : '进行中'}</b><span>状态</span></div>`;
+}
+
+/* 这一局第一手是谁走的：从起点局面推（对弈默认红先，但「编辑局面」摆出来的
+   残局完全可能轮到黑方先走）。着法记录的编号、导出棋谱的行首都得看它。 */
+function fenMoverRed(fen){ return String(fen || '').trim().split(/\s+/)[1] !== 'b'; }
+function playStartRed(){ return play.startFen ? fenMoverRed(play.startFen) : true; }
+
+/* 对弈模式里"有没有一盘棋可以搬走"：走过子当然算；用「编辑局面」摆出来的
+   局面（还没走子）也算 —— 摆残局直接拿去讲解正是这个功能的用法之一。 */
+function playHasGame(){
+  if (play.history.length) return true;
+  return !!(play.startFen && play.startFen !== window.START_FEN);
+}
+
+/* 教练模式那个「读取对弈棋局」按钮：没棋可读时禁用。
+   预演中也禁用 —— 读取会重设真实棋盘，正摆着的预演线会当场作废。 */
+function updateLoadPlayBtn(){
+  const btn = document.getElementById('btnLoadPlay');
+  if (!btn) return;
+  const n = play.history.length, has = playHasGame();
+  btn.disabled = !has || !!state.preview;
+  const note = document.getElementById('loadPlayNote');
+  if (note) note.textContent = n
+    ? `对弈模式里有 ${n} 手棋，可以整体搬过来讲解`
+    : (has ? '对弈模式里摆好了一个局面（还没走子），可以搬过来直接分析'
+           : '在「对弈模式」下完棋后，可从那里把棋局搬过来讲解');
+}
+
+/* ---------- 棋谱文本 / 保存 / 导出 / 送复盘 ---------- */
+/* 生成能直接喂给复盘的**纯棋谱**。
+   一行注释都不要加：复盘那边是把文本按空格切词、再逐个识别成着法的，
+   文件头写个「# 对弈棋局」会被当成看不懂的着法，直接报"没识别出任何合法着法"。 */
+function playText(){
+  const hs = play.history;
+  if (!hs.length) return '';
+  const lines = []; let cur = '', redNo = 0;
+  const startRed = playStartRed();
+  hs.forEach((h, i) => {
+    const moverRed = (i % 2 === 0) ? startRed : !startRed;
+    if (moverRed) cur = `${++redNo}. ${h.chinese || h.uci}`;
+    else if (cur) { cur += ` ${h.chinese || h.uci}`; lines.push(cur); cur = ''; }
+    else lines.push(h.chinese || h.uci);   // 黑先时第一手挂不上红方手数，单列一行
+  });
+  if (cur) lines.push(cur);
+  return lines.join('\n');
+}
+
+function loadSaves(){
+  try{ return JSON.parse(localStorage.getItem(PLAY_SAVE_KEY) || '[]') || []; }
+  catch(e){ return []; }
+}
+function writeSaves(list){
+  try{ localStorage.setItem(PLAY_SAVE_KEY, JSON.stringify(list)); return true; }
+  catch(e){
+    setPlayHint('保存失败（浏览器本地存储不可用）：' + escapeHtml(e.message));
+    return false;
+  }
+}
+function playSave(){
+  if (play.editing){ setPlayHint('先把局面摆完、点「用这个局面开局」，再保存这盘棋。'); return; }
+  if (!play.history.length){ setPlayHint('这局还没走过子，没什么可存的。'); return; }
+  const list = loadSaves();
+  list.unshift({
+    id: Date.now(),
+    time: new Date().toLocaleString('zh-CN'),
+    aiSide: play.aiSide, depth: play.depth,
+    result: play.result || '',
+    moves: play.history.length,
+    // 起点局面：用「编辑局面」摆出来的残局，载入时要能连起点一起还原，
+    // 否则棋谱会被当成"从标准开局走的"（送去复盘就全错了）
+    startFen: play.startFen || window.START_FEN,
+    // 存每一步的"走子前局面 + 着法"，载入时逐步重放即可，不必再解析中文记谱
+    steps: play.history.map(h => ({fenBefore: h.fenBefore, uci: h.uci, chinese: h.chinese}))
+  });
+  if (!writeSaves(list.slice(0, 30))) return;
+  renderSaves();
+  setPlayHint(`已保存这盘棋（留下的最多 30 盘）。注意它存在浏览器本地，` +
+              '换浏览器或清缓存就没了 —— 想长期留着请用「导出 .txt」。');
+}
+function renderSaves(){
+  const host = document.getElementById('saveListHost');
+  if (!host) return;
+  const list = loadSaves();
+  if (!list.length){ host.innerHTML = '<div class="muted">还没有保存过对局。</div>'; return; }
+  host.innerHTML = '<div class="muted" style="margin-bottom:4px">已保存的对局（点「载入」接着看）</div>'
+    + list.map(s => `<div class="saveItem">
+        <span class="meta" title="${escapeHtml(s.time)}">${escapeHtml(s.time)} · ` +
+        `你执${s.aiSide === 'red' ? '黑' : '红'} · ${s.moves} 手` +
+        `${s.result ? ' · ' + escapeHtml(s.result) : ''}</span>
+        <button class="btn xs" data-load="${s.id}">载入</button>
+        <button class="btn xs" data-del="${s.id}">删除</button>
+      </div>`).join('');
+}
+function loadSavedGame(id){
+  const s = loadSaves().find(x => String(x.id) === String(id));
+  if (!s || !s.steps || !s.steps.length){ setPlayHint('这条存档不存在或已损坏。'); return; }
+  if (play.busy){ setPlayHint('AI 正在思考，等它走完再载入。'); return; }
+  if (play.editing) setPlayEditMode(false);    // 正在摆局面就别打断，直接收掉编辑
+  play.aiSide = s.aiSide === 'red' ? 'red' : 'black';
+  if (s.depth){ play.depth = s.depth; }
+  const dEl = document.getElementById('playDepth');
+  if (dEl) dEl.value = play.depth;
+  play.board = fenToBoard(s.steps[0].fenBefore);
+  play.red = fenMoverRed(s.steps[0].fenBefore);
+  // 老存档没存 startFen → 用第一手之前的那个局面当起点（就是它的起点）
+  play.startFen = s.startFen || s.steps[0].fenBefore || window.START_FEN;
+  play.history = []; play.lastMove = null;
+  play.over = false; play.result = ''; play.lastEval = null;
+  play.started = true; play.selected = null; play.legalCache = [];
+  s.steps.forEach(st => {
+    const fr = uciToFr(st.uci);
+    playDoMove(fr.from, fr.to, st.uci, st.chinese);
+  });
+  updatePlaySideUI();
+  drawPlayBoard(); renderPlayMoveList(); renderPlayInfo(); updateLoadPlayBtn();
+  setPlayHint(`已载入 ${escapeHtml(s.time)} 的对局（${s.moves} 手）。` +
+              (play.over ? '' : `现在轮到${play.red ? '红方' : '黑方'}走。`));
+}
+function delSavedGame(id){
+  writeSaves(loadSaves().filter(x => String(x.id) !== String(id)));
+  renderSaves();
+  setPlayHint('已删除这条存档。');
+}
+
+function playExport(){
+  const txt = playText();
+  if (!txt){ setPlayHint('这局还没走过子，没有棋谱可导出。'); return; }
+  const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+  const name = `对弈-${stamp}-${play.aiSide === 'red' ? 'AI执红' : 'AI执黑'}.txt`;
+  try{
+    const blob = new Blob([txt + '\n'], {type: 'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    if (document.body && document.body.appendChild){
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } else { a.click(); }
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    setPlayHint('已导出 <b>' + escapeHtml(name) + '</b>（纯棋谱，可直接粘进复盘框）。');
+  }catch(e){
+    setPlayHint('导出失败：' + escapeHtml(e.message) + '（可以改用「复制棋谱」再自己粘贴存文件）');
+  }
+}
+async function playCopy(){
+  const txt = playText();
+  if (!txt){ setPlayHint('这局还没走过子。'); return; }
+  try{ await navigator.clipboard.writeText(txt); setPlayHint('棋谱已复制到剪贴板。'); }
+  catch(e){ prompt('复制这段棋谱：', txt); }
+}
+function playToReview(){
+  const txt = playText();
+  if (!txt){ setPlayHint('这局还没走过子，没有棋谱可送去复盘。'); return; }
+  const ta = document.getElementById('reviewText');
+  if (ta) ta.value = txt;
+  // 起点局面必须跟着一起走：用「编辑局面」摆出来的残局开的那一局，
+  // 复盘要是从标准开局算起，每一个 token 都匹配不上（整盘全错）
+  reviewStartFen = play.startFen || window.START_FEN;
+  const note = document.getElementById('reviewFillNote');
+  if (note){
+    note.style.display = 'block';
+    note.textContent = `已从对弈模式填入 ${play.history.length} 手棋谱（你执${humanSideCn()}）` +
+      (reviewStartFen === window.START_FEN ? '' : '，起点是你在对弈模式里摆好的局面') +
+      '，点「开始复盘」就能逐手分析。';
+  }
+  view = 'review';
+  refreshAll();
+}
+
+/* ---------- 对弈模式的按钮 ---------- */
+document.getElementById('btnPlayNew').onclick = playNew;
+document.getElementById('btnPlayUndo').onclick = playUndo;
+document.getElementById('btnPlayFlip').onclick = () => {
+  play.flip = !play.flip; drawPlayBoard();
+};
+document.getElementById('btnPlayResign').onclick = () => {
+  if (!play.started){ setPlayHint('还没开局。'); return; }
+  if (play.over){ setPlayHint('这局已经结束了。'); return; }
+  if (play.busy){ setPlayHint('AI 正在思考，等它走完。'); return; }
+  playEnd(`你认输，${aiSideCn()}（AI）胜`);
+};
+document.getElementById('btnPlayRed').onclick = () => setPlaySide('black');   // 我执红 → AI 执黑
+document.getElementById('btnPlayBlack').onclick = () => setPlaySide('red');   // 我执黑 → AI 执红
+document.getElementById('btnPlaySave').onclick = playSave;
+document.getElementById('btnPlayCopy').onclick = playCopy;
+document.getElementById('btnPlayExport').onclick = playExport;
+document.getElementById('btnPlayToReview').onclick = playToReview;
+document.getElementById('playDepth').addEventListener('change', () => {
+  const el = document.getElementById('playDepth');
+  const d = parseInt(el.value, 10);
+  play.depth = Math.max(1, Math.min(40, isNaN(d) ? (play.depth || 12) : d));
+  el.value = play.depth;
+  renderPlayInfo();
+  setPlayHint(`AI 对弈深度已改为 ${play.depth}（这是对弈自己的深度，不影响讲解）。`);
+});
+// 存档列表用事件委托：整段 innerHTML 每次重渲染，单独绑按钮会立刻失效
+document.getElementById('saveListHost').addEventListener('click', ev => {
+  const b = ev.target.closest ? ev.target.closest('button') : null;
+  if (!b) return;
+  if (b.dataset && b.dataset.load) loadSavedGame(b.dataset.load);
+  else if (b.dataset && b.dataset.del) delSavedGame(b.dataset.del);
+});
+/* 「编辑局面」那一条工具行：摆好之后点「用这个局面开局」才真正开始一盘棋。
+   撤销 / 清空 / 摆回开局 和教练模式共用同一份实现（见 editClearBoard / editResetBoard）。 */
+document.getElementById('btnPlayEdit').onclick = () => setPlayEditMode(!play.editing);
+document.getElementById('btnPlayStart').onclick = startPlayFromEdit;
+document.getElementById('btnPlayEditUndo').onclick = undoEdit;
+document.getElementById('btnPlayEditClear').onclick = editClearBoard;
+document.getElementById('btnPlayEditStart').onclick = editResetBoard;
+document.getElementById('btnPlayTurnRed').onclick = () => setTurn(true);
+document.getElementById('btnPlayTurnBlack').onclick = () => setTurn(false);
+
 /* ---------- 预演摆盘的控制条 ---------- */
 document.getElementById('prevNext').onclick = () => {
   const p = state.preview; if (!p) return;
@@ -1892,39 +2877,45 @@ document.getElementById('candTable').addEventListener('click', ev => {
 
 /* ---------- 局面编辑按钮 ---------- */
 function undoEdit(){
-  const s = state.editUndo.pop();
-  if (!s){ setHint('没有可撤销的编辑操作了。'); return; }
-  state.board = s.board.slice(); state.red = s.red;
-  clearHand(); drawBoard(); updateEditUI(); scheduleValidate();
-  setHint('已撤销一步编辑。');
+  const o = edObj();
+  const s = o.editUndo.pop();
+  if (!s){ edHint('没有可撤销的编辑操作了。'); return; }
+  o.board = s.board.slice(); o.red = s.red;
+  clearHand(); edDraw(); edUI(); edValidate();
+  edHint('已撤销一步编辑。');
+}
+/* 「清空棋盘」「摆回开局」两个编辑会话共用 —— 同一时刻只可能有一个在编辑，
+   所以不用问"现在编辑的是谁"，edObj() 自己认。 */
+function editClearBoard(){
+  clearHand();
+  editMutate(() => { edObj().board = new Array(90).fill(''); });
+  edDraw(); edUI();
+  edHint('棋盘已清空，32 枚棋子都在棋子盒里，点一枚再点棋盘就能摆上。');
+}
+function editResetBoard(){
+  clearHand();
+  editMutate(() => { edObj().board = fenToBoard(window.START_FEN); edObj().red = true; });
+  edDraw(); edUI();
+  edHint('已把棋盘摆回标准开局。');
 }
 document.getElementById('btnEdit').onclick = () => setEditMode(!state.editing);
 document.getElementById('btnEditUndo').onclick = undoEdit;
-document.getElementById('btnEditClear').onclick = () => {
-  clearHand();
-  editMutate(() => { state.board = new Array(90).fill(''); });
-  drawBoard(); updateEditUI();
-  setHint('棋盘已清空，32 枚棋子都在下面的棋子盒里，点一枚再点棋盘就能摆上。');
-};
-document.getElementById('btnEditStart').onclick = () => {
-  clearHand();
-  editMutate(() => { state.board = fenToBoard(window.START_FEN); state.red = true; });
-  drawBoard(); updateEditUI();
-  setHint('已摆回开局局面。');
-};
+document.getElementById('btnEditClear').onclick = editClearBoard;
+document.getElementById('btnEditStart').onclick = editResetBoard;
 document.getElementById('btnTurnRed').onclick = () => setTurn(true);
 document.getElementById('btnTurnBlack').onclick = () => setTurn(false);
-// Esc：先取消手上拿着的子，再退一步退出编辑模式
+// Esc：先取消手上拿着的子，再退一步退出编辑模式（两个模式的编辑会话都认）
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   const t = e.target;
   if (t && /^(INPUT|TEXTAREA)$/.test(t.tagName)) return;
   if (handPiece){
-    clearHand(); drawBoard(); updateEditUI();
-    setHint('已取消选中。');
+    clearHand(); edDraw(); edUI();
+    edHint('已取消选中。');
     return;
   }
-  if (state.editing) setEditMode(false);
+  if (play.editing) setPlayEditMode(false);
+  else if (state.editing) setEditMode(false);
 });
 document.getElementById('btnCopyFen').onclick = async () => {
   const f = curFen();
@@ -1948,6 +2939,44 @@ document.getElementById('btnPasteFen').onclick = () => {
     setHint('已载入局面。点「分析当前局面」看引擎怎么说。');
   }catch(e){ alert('FEN 格式有问题：' + e.message); }
 };
+/* 把对弈模式的棋局整体搬进教练模式：局面 + 着法记录 + 最后一步。
+   搬完马上就能「分析当前局面」「讲解我这一步」，也能照常预演 / 追问。
+   注意旧的讲解和追问必须清掉（那是上一盘棋的东西）—— 清法要跟编辑局面一致，
+   少清一处就会在新棋局下面挂着上一盘的问答。 */
+function loadPlayGame(){
+  if (!playHasGame()){
+    setHint('对弈模式里还没有棋：先去「对弈模式」下一盘（或用「编辑局面」摆一个局面），再回来读取。');
+    return;
+  }
+  const n = play.history.length;
+  exitEditSilently();
+  exitPreview();
+  state.board = play.board.slice();
+  state.red = play.red;
+  // 逐步深拷贝：两边共享 from/to 数组的话，日后任一边改了坐标会互相串
+  state.history = play.history.map(h => ({
+    fenBefore: h.fenBefore, uci: h.uci, chinese: h.chinese,
+    from: h.from.slice(), to: h.to.slice()}));
+  const last = play.history[play.history.length - 1];
+  state.lastMove = last ? {fenBefore: last.fenBefore, uci: last.uci,
+                           chinese: last.chinese,
+                           from: last.from.slice(), to: last.to.slice()} : null;
+  state.facts = null; state.factsFen = null; state.factsKey = null;
+  window.lastExplain = ''; window.lastExplainKey = '';
+  clearAskHistory();
+  document.getElementById('btnAnalyzeMove').disabled = !state.lastMove;
+  document.getElementById('explainBox').innerHTML = n
+    ? `<span class="muted">已从「对弈模式」读取这盘棋（${n} 手，你执${humanSideCn()}）。` +
+      '点「分析当前局面」看现在谁占优，或「讲解我这一步」看 AI 刚走的那手好在哪里。</span>'
+    : '<span class="muted">已从「对弈模式」读取你摆好的局面（还没走子）。' +
+      '点「分析当前局面」让引擎评一评这个残局。</span>';
+  refreshAll();
+  setHint(n
+    ? `已读取对弈棋局（${n} 手）。想整盘复盘就去「整盘复盘」；想练这一手就点「讲解我这一步」。`
+    : '已读取对弈模式里摆好的局面。点「分析当前局面」，或者直接在棋盘上接着走。');
+  if (autoCalcOn()) runAutoCalc();
+}
+document.getElementById('btnLoadPlay').onclick = loadPlayGame;
 document.getElementById('btnCalcPos').onclick = () => analyze(false, false);
 document.getElementById('btnAnalyzePos').onclick = () => analyze(false, true);
 document.getElementById('btnAnalyzeMove').onclick = () => analyze(true, true);
@@ -1957,7 +2986,78 @@ document.getElementById('askInput').addEventListener('keydown', e => {
   if (e.key === 'Enter') ask();
 });
 document.getElementById('btnReview').onclick = startReview;
+/* 手动改复盘输入框 = 换了棋谱，之前「送去复盘」带过来的起点局面就不作数了 */
+document.getElementById('reviewText').addEventListener('input', () => {
+  reviewStartFen = '';
+  const n = document.getElementById('reviewFillNote');
+  if (n) n.style.display = 'none';
+});
 document.getElementById('btnReport').onclick = genReport;
+
+/* ============ 设置 ============ */
+/* 只写 config.json 里白名单里的字段（服务端 SETTINGS_SPEC 把关）。
+   保存后立即生效：引擎深度是每次请求现读 CFG 的，不用重启服务；
+   reasoning_effort 也是。改完窗口顶栏那行摘要会同步刷新，好确认真的生效了。 */
+function openSettings(){
+  const c = window.CFG || {};
+  document.getElementById('setAnalyzeDepth').value = (c.analyze_depth ?? 18);
+  document.getElementById('setPlayDepth').value = (c.play_depth ?? play.depth ?? 12);
+  document.getElementById('setReviewDepth').value = (c.review_depth ?? 14);
+  document.getElementById('setMultipv').value = (c.multipv ?? 4);
+  document.getElementById('setEffort').value = c.reasoning_effort || 'default';
+  document.getElementById('setCloud').checked = !!c.cloud;
+  const h = document.getElementById('setHint');
+  h.style.color = '';
+  h.textContent = '保存后会写回 config.json，下一次分析 / 走子就用新值（不用重启服务）。';
+  document.getElementById('settingsModal').style.display = 'flex';
+}
+function closeSettings(){
+  document.getElementById('settingsModal').style.display = 'none';
+}
+async function saveSettings(){
+  const h = document.getElementById('setHint');
+  h.style.color = '';
+  h.textContent = '保存中…';
+  const body = {settings: {
+    analyze_depth: document.getElementById('setAnalyzeDepth').value,
+    play_depth: document.getElementById('setPlayDepth').value,
+    review_depth: document.getElementById('setReviewDepth').value,
+    multipv: document.getElementById('setMultipv').value,
+    reasoning_effort: document.getElementById('setEffort').value,
+    cloud_enabled: document.getElementById('setCloud').checked
+  }};
+  try{
+    const r = await jpost('/api/settings', body);
+    if (!r.ok){
+      h.style.color = 'var(--bad)';
+      h.textContent = '没保存成功：' + (r.error || '未知错误');
+      return;
+    }
+    window.CFG = r.config;
+    play.depth = r.config.play_depth;
+    const pd = document.getElementById('playDepth');
+    if (pd) pd.value = r.config.play_depth;
+    const rd = document.getElementById('reviewDepth');
+    if (rd) rd.value = r.config.review_depth;      // 复盘页那个深度输入框也跟上
+    document.getElementById('engInfo').textContent =
+      `${r.config.engine} · ${r.config.model} · 深度 ${r.config.analyze_depth}`;
+    h.style.color = 'var(--ok)';
+    h.textContent = '已保存 ✓' +
+      ((r.errors && r.errors.length) ? '（未生效的项：' + r.errors.join('；') + '）' : '');
+    renderPlayInfo();
+    setTimeout(closeSettings, 700);
+  }catch(e){
+    h.style.color = 'var(--bad)';
+    h.textContent = '保存失败：' + e.message;
+  }
+}
+document.getElementById('btnSettings').onclick = openSettings;
+document.getElementById('btnSetCancel').onclick = closeSettings;
+document.getElementById('btnSetSave').onclick = saveSettings;
+// 点遮罩空白处也关掉（点弹窗本体不关，免得填一半被点没了）
+document.getElementById('settingsModal').addEventListener('click', ev => {
+  if (ev.target && ev.target.id === 'settingsModal') closeSettings();
+});
 
 /* ============ 启动 ============ */
 (async function init(){
@@ -1967,6 +3067,15 @@ document.getElementById('btnReport').onclick = genReport;
   window.START_RED = true;
   document.getElementById('engInfo').textContent =
     `${cfg.engine} · ${cfg.model} · 深度 ${cfg.analyze_depth}`;
+  // 对弈模式的深度取自 config.play_depth —— 和讲解深度 analyze_depth 是两套
+  play.depth = cfg.play_depth || 12;
+  document.getElementById('playDepth').value = play.depth;
+  // 先把开局摆进对弈棋盘，这样一切过去就能看见棋盘（而不是一片空白）
+  play.board = fenToBoard(window.START_FEN);
+  play.startFen = window.START_FEN;      // 还没点过「新开一局」，起点先按标准开局记
+  renderSaves();
+  updatePlaySideUI();
+  updatePlayEditUI();
   newGame();
   setHint('在棋盘上走一步，然后点「讲解我这一步」，就知道这步棋差在哪。');
 })();

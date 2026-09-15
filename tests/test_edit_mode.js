@@ -101,6 +101,27 @@ ${grab('bindAskHistory')}
 let handPiece = null, handFrom = null;
 let selected = null, legalCache = [];
 let cursorVb = null, validateTimer = null;
+let playValidateTimer = null;
+/* 编辑会话现在能挂在两个目标上（教练的 state / 对弈的 play）。
+   这个套件只测教练那一侧，所以 play 给个最小的空壳就行 ——
+   但必须存在：edIsPlay() 一上来就要读 play.editing。 */
+const play = {editing: false, history: [], board: [], red: true, lastMove: null,
+              lastEval: null, over: false, result: '', selected: null, legalCache: [],
+              started: false, startFen: '', flip: false,
+              editDirty: false, editUndo: [], preEdit: null};
+${grab('edIds')}
+${grabConst('edIsPlay')}
+${grab('edObj')}
+${grab('edAny')}
+${grabConst('edFlip')}
+${grab('edDraw')}
+${grab('edUI')}
+${grabConst('edId')}
+${grab('edById')}
+${grab('edBoardSvg')}
+${grab('edAfterChange')}
+${grab('edValidate')}
+${grabConst('edHint')}
 ${grabConst('isRed')}
 ${grabConst('curFen')}
 ${grabConst('boardKey')}
@@ -111,7 +132,9 @@ ${grabConst('TYPE_ORDER')}
 ${grab('fenToBoard')}
 ${grab('boardToFen')}
 ${grab('xy')}
+${grab('boardBaseSvg')}
 ${grab('squareFromPixels')}
+${grab('eventToSquareIn')}
 ${grab('eventToSquare')}
 ${grab('pieceMarkup')}
 ${grab('describePiece')}
@@ -470,8 +493,11 @@ console.log('【布局】棋子盒必须在棋盘右侧，不能堆在下面（�
   const trayCss = /\.tray\{([^}]*)\}/.exec(src);
   check(trayCss && !/margin-top/.test(trayCss[1]),
         '.tray 不应再带 margin-top（那说明它还被当成棋盘下面的一块）');
-  const wide = /#viewCoach\.editing\{[^}]*grid-template-columns:\s*(\d+)px/.exec(src);
+  const wide = /#viewCoach\.editing[^{]*\{[^}]*grid-template-columns:\s*(\d+)px/.exec(src);
   check(!!wide, '编辑模式应有 #viewCoach.editing 加宽左栏的规则');
+  // 对弈模式的「编辑局面」用的是同一个棋子盒，加宽规则和教练模式写在一起
+  check(/#viewCoach\.editing\s*,\s*#viewPlay\.editing\s*\{[^}]*grid-template-columns/.test(src),
+        '★对弈模式的编辑局面（#viewPlay.editing）也要加宽左栏 —— 它同样要摆棋子盒');
   if (wide){
     const need = W + 12 + +(/width:(\d+)px/.exec(trayCss[1]) || [])[1] + 28;
     check(+wide[1] >= need,

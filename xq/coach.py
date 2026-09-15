@@ -206,6 +206,74 @@ def build_facts(fen, played_move=None, depth=18, movetime=None, multipv=4,
     }
 
 
+# ---------------------------------------------------------------- 对弈走子
+def build_bestmove(fen, depth=12, movetime=None, cfg=None):
+    """对弈模式：只让引擎给一步棋（top1），不查云库、不叫大模型。
+
+    和 build_facts 的区别是"轻"——对弈每步都要调一次，不能像讲解那样
+    跑 MultiPV + 云库 + 组装一大包材料。这里只要一条线。
+
+    legal_count / game_over 交给前端判终局：无着可走时，正被将军=将死、
+    否则=困毙，中国象棋规则里两种都判走子方负。
+    返回里的 uci 是给前端"落子"用的，不会进任何提示词（材料层仍然只有中文）。
+    """
+    cfg = cfg or load_cfg()
+    try:
+        board, red_to_move = R.parse_fen(fen)
+    except Exception as e:
+        return {"error": f"FEN 解析失败：{e}"}
+    ok, probs = R.validate(board, red_to_move)
+    if not ok:
+        return {"error": "局面不合法，已阻止走子：" + "；".join(probs)}
+
+    side_name = "红方" if red_to_move else "黑方"
+    loser_wins = "黑方" if red_to_move else "红方"
+    legal = R.legal_moves(board, red_to_move)
+    if not legal:
+        checked = R.in_check(board, red_to_move)
+        why = "被将死" if checked else "被困毙（无着可走）"
+        return {"fen": fen, "side_to_move": side_name, "legal_count": 0,
+                "game_over": True,
+                "reason": "将死" if checked else "困毙",
+                "winner": loser_wins,
+                "result": f"{loser_wins}胜（{side_name}{why}）"}
+
+    legal_uids = {R.move_uid(m) for m in legal}
+    eng = engine_mod.get_engine(cfg)
+    res = eng.analyze(fen, depth=depth, movetime=movetime, multipv=1)
+    lines = res.get("lines") or []
+    ln = lines[0] if lines else None
+    best = res.get("bestmove")
+    # 引擎偶尔会给 "(none)" 或一条不在合法着法里的走法：先退回它的 PV，
+    # 再不行就明确报错 —— 宁可让前端提示"引擎没给出着法"，也不能落一步非法的棋
+    if best not in legal_uids and ln:
+        best = next((u for u in (ln.get("pv") or []) if u in legal_uids), None)
+    if best not in legal_uids:
+        return {"error": "引擎没有给出可用的着法"}
+
+    mv = R.uid_to_move(best)
+    cp, is_mate = _norm_move_score(ln)
+    seq, _, _ = R.describe_line(board, (ln or {}).get("pv") or [],
+                                red_to_move, limit=12)
+    return {
+        "fen": fen,
+        "side_to_move": side_name,
+        "uci": best,
+        "chinese": R.move_to_chinese(board, mv),
+        "score_cp": cp,
+        "score_red": _red_view(cp, red_to_move),
+        "is_mate": is_mate,
+        "wdl": (ln or {}).get("wdl"),
+        "depth": (ln or {}).get("depth", 0),
+        "capture": R.is_capture(board, mv),
+        "pv_chinese": seq,
+        # 同 build_facts：pv_uci 只给前端"预演/落子"用，绝不进提示词
+        "pv_uci": list(((ln or {}).get("pv") or [])[:len(seq)]),
+        "legal_count": len(legal),
+        "game_over": False,
+    }
+
+
 # ---------------------------------------------------------------- 提示词
 SYS_COACH = """你是一位中国象棋教练，正在给一位业余棋友讲棋。他的水平是：懂规则、会走子，但看不懂引擎分数背后的道理。
 

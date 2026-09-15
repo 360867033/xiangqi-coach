@@ -10,6 +10,7 @@
   "reasoning_effort": "low",
 
   "analyze_depth": 18,
+  "play_depth": 12,
   "review_depth": 14,
   "multipv": 4,
   "cloud_timeout": 6,
