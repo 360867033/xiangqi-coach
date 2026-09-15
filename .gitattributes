@@ -1,0 +1,19 @@
+# 默认按文本处理，仓库内统一 LF
+* text=auto eol=lf
+
+# Windows 批处理必须保持 CRLF（cmd.exe 对 LF 结尾的 .bat 会出怪问题）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不要做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.exe binary
+*.nnue binary
+*.obk binary
+*.wav binary
+
+# 中文文档在 GitHub 上按文本 diff
+*.md text

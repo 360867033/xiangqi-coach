@@ -1,0 +1,19 @@
+{
+  "engine_path": "\\xiangqi-coach\\Pikafish\\皮卡鱼-Pikafish\\Pikafish-Windows-x86-64-universal.exe",
+  "nnue_path": "\\xiangqi-coach\\Pikafish\\皮卡鱼-Pikafish\\pikafish.nnue",
+  "threads": 8,
+  "hash_mb": 1024,
+
+  "api_key": "sk-your-deepseek-key-here",
+  "base_url": "https://api.deepseek.com/v1",
+  "model": "deepseek-flash",
+  "reasoning_effort": "low",
+
+  "analyze_depth": 18,
+  "review_depth": 14,
+  "multipv": 4,
+  "cloud_timeout": 6,
+  "cloud_enabled": true,
+  "port": 8760,
+  "gui_path": "\\xiangqi-coach\\Pikafish\\鲨鱼象棋.exe"
+}
